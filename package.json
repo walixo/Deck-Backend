@@ -13,7 +13,11 @@
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "create-admin": "tsx src/scripts/create-admin.ts"
+    "create-admin": "tsx src/scripts/create-admin.ts",
+    "backfill-revisions": "tsx src/scripts/backfill-revisions.ts",
+    "seed-artwork": "tsx src/scripts/seed-artwork.ts",
+    "seed-future-gen": "tsx src/scripts/seed-future-gen.ts",
+    "seed-forum": "tsx src/scripts/seed-forum.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

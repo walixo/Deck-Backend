@@ -1,26 +1,76 @@
 import { env } from './config/env';
 
-export const CATEGORIES = [
-  'ai-model',
-  'ai-tool',
-  'claude-skill',
-  'developer-tool',
-  'mobile-app',
-  'website',
-  'hardware',
+/**
+ * The icons a category may use.
+ *
+ * A curated set, not free choice. An icon set only works if it holds together —
+ * one stroke weight, one optical size, inheriting the theme's colour so it reads
+ * on both canvases. These are Heroicons outline names, resolved to components on
+ * the frontend; the backend only ever stores and validates the key.
+ *
+ * Living here rather than in the frontend because the model validates against
+ * it: an icon key that does not exist should be rejected at write time, not
+ * discovered as a blank square months later.
+ */
+export const CATEGORY_ICONS = {
+  'cpu-chip': 'Chip, silicon, models',
+  sparkles: 'AI, generative, magic',
+  'command-line': 'CLI, terminal, scripts',
+  'code-bracket': 'Code, libraries, SDKs',
+  'device-phone-mobile': 'Mobile apps',
+  'globe-alt': 'Websites, the web',
+  cube: 'Hardware, physical things',
+  'puzzle-piece': 'Plugins, extensions',
+  bolt: 'Speed, automation',
+  beaker: 'Experiments, research',
+  'chart-bar': 'Analytics, data',
+  'circle-stack': 'Databases, storage',
+  cloud: 'Infrastructure, hosting',
+  'credit-card': 'Payments, fintech',
+  'document-text': 'Docs, writing',
+  envelope: 'Email, messaging',
+  film: 'Video, media',
+  'finger-print': 'Identity, auth',
+  'lock-closed': 'Security, privacy',
+  megaphone: 'Marketing, growth',
+  'musical-note': 'Audio, music',
+  'paint-brush': 'Design, creative',
+  photo: 'Images, galleries',
+  'rocket-launch': 'Launches, startups',
+  'shopping-bag': 'Commerce, retail',
+  'squares-plus': 'Templates, kits',
+  users: 'Community, social',
+  'wrench-screwdriver': 'Tools, utilities',
+  window: 'Desktop apps',
+  'academic-cap': 'Learning, education',
+} as const;
+
+export type CategoryIconKey = keyof typeof CATEGORY_ICONS;
+
+/**
+ * The categories Deck ships with. These SEED the Category collection on first
+ * run; after that the database is the source of truth and this list is history.
+ * Nothing at runtime should validate against it.
+ */
+export const SEED_CATEGORIES = [
+  { slug: 'ai-model', label: 'AI Models', icon: 'cpu-chip', order: 10 },
+  { slug: 'ai-tool', label: 'AI Tools', icon: 'sparkles', order: 20 },
+  { slug: 'claude-skill', label: 'Claude Skills', icon: 'puzzle-piece', order: 30 },
+  { slug: 'developer-tool', label: 'Developer Tools', icon: 'command-line', order: 40 },
+  { slug: 'mobile-app', label: 'Mobile Apps', icon: 'device-phone-mobile', order: 50 },
+  { slug: 'website', label: 'Websites', icon: 'globe-alt', order: 60 },
+  { slug: 'hardware', label: 'Hardware', icon: 'cube', order: 70 },
 ] as const;
 
-export type Category = (typeof CATEGORIES)[number];
-
-export const CATEGORY_LABELS: Record<Category, string> = {
-  'ai-model': 'AI Models',
-  'ai-tool': 'AI Tools',
-  'claude-skill': 'Claude Skills',
-  'developer-tool': 'Developer Tools',
-  'mobile-app': 'Mobile Apps',
-  website: 'Websites',
-  hardware: 'Hardware',
-};
+/**
+ * A category slug.
+ *
+ * Deliberately `string` and not a union. Categories live in the database now, so
+ * the set is not knowable at compile time — a union here would be a type that
+ * lies the moment somebody adds one through the admin area. Validity is checked
+ * against the collection at write time instead.
+ */
+export type Category = string;
 
 export const PRICING_MODELS = ['free', 'freemium', 'paid', 'open-source'] as const;
 export type PricingModel = (typeof PRICING_MODELS)[number];
@@ -90,6 +140,22 @@ export const PLATFORM_FEE_PERCENT = env.platformFeePercent;
 export const MIN_CONTRIBUTION_MINOR = env.minContributionMinor;
 export const MAX_CONTRIBUTION_MINOR = env.maxContributionMinor;
 
+/*
+ * What a launch has to have done before it can ask to raise money.
+ *
+ * Traction, not merit — nobody here is judging the idea. The point is that a
+ * fundraise application should cost something that cannot be manufactured on
+ * the way in, and the cheapest thing to manufacture is a launch posted five
+ * minutes ago by an account created ten minutes ago. Twenty votes and three
+ * comments means real people found it and at least a few of them had something
+ * to say, which is the weakest signal worth gating on.
+ *
+ * Deliberately visible in the UI rather than enforced silently: a maker who
+ * cannot apply yet should be able to see exactly how far off they are.
+ */
+export const FUNDRAISE_MIN_VOTES = 20;
+export const FUNDRAISE_MIN_COMMENTS = 3;
+
 /* ------------------------------------------------------------------ ads --- */
 
 /** Where a paid placement can appear. One live ad per placement at a time. */
@@ -154,6 +220,12 @@ export type AdStatus = (typeof AD_STATUSES)[number];
 export const AUDIT_ACTIONS = [
   'role.granted',
   'role.revoked',
+  'user.verified',
+  'user.unverified',
+  'post.created',
+  'post.published',
+  'post.unpublished',
+  'post.deleted',
   'merch.approved',
   'merch.rejected',
   'merch.edited',
@@ -163,12 +235,35 @@ export const AUDIT_ACTIONS = [
   'payout.recorded',
   'item.edited',
   'item.deleted',
+  'item.rescheduled',
+  'category.created',
+  'category.updated',
+  'category.removed',
   'fundraise.changed',
+  'fundraise.approved',
+  'fundraise.rejected',
+  'futuregen.added',
+  'futuregen.removed',
   'comment.deleted',
+  'topic.edited',
+  'topic.deleted',
+  'topic.moderated',
+  'reply.deleted',
   'ad.approved',
   'ad.rejected',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export const AUDIT_TARGETS = ['user', 'merch', 'order', 'payout', 'item', 'comment', 'ad'] as const;
+export const AUDIT_TARGETS = [
+  'user',
+  'merch',
+  'order',
+  'payout',
+  'item',
+  'category',
+  'comment',
+  'ad',
+  'post',
+  'topic',
+] as const;
 export type AuditTarget = (typeof AUDIT_TARGETS)[number];

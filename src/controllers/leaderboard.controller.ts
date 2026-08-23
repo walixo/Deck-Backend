@@ -4,7 +4,10 @@ import { Vote } from '../models/Vote';
 import { toItemResponse } from '../serializers';
 import { addDays, parseDateParam, startOfUtcDay, toDateKey } from '../utils/date';
 
-const SUBMITTER_FIELDS = 'name username avatarUrl headline';
+/* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
+   leaving it out does not omit the field — it sends `verified: false` for every
+   account, which is a wrong answer rather than a missing one. */
+const SUBMITTER_FIELDS = 'name username avatarUrl headline verified';
 
 async function votedIdsFor(userId: string | undefined, items: IItem[]): Promise<Set<string>> {
   if (!userId || items.length === 0) return new Set();

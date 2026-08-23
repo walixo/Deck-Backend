@@ -1,21 +1,31 @@
 import type { Request, Response } from 'express';
 import mongoose, { type FilterQuery } from 'mongoose';
+import { env } from '../config/env';
 import { Comment } from '../models/Comment';
 import { Item, type IItem } from '../models/Item';
+import { ItemRevision } from '../models/ItemRevision';
 import { Vote } from '../models/Vote';
-import { toItemResponse } from '../serializers';
+import { toItemResponse, toRevisionResponse } from '../serializers';
+import { assertCategory } from './category.controller';
 import { audit } from '../services/audit';
 import { evaluateBadges } from '../services/badges';
+import { recordRevision, snapshotOf } from '../services/revisions';
 import { ApiError } from '../utils/ApiError';
 import { toDateKey } from '../utils/date';
 import { uniqueSlug } from '../utils/slug';
 import type {
   CreateItemInput,
   ListItemsQuery,
+  ReleaseItemInput,
+  RescheduleItemInput,
+  SetFutureGenInput,
   UpdateItemInput,
 } from '../validators/item.validators';
 
-const SUBMITTER_FIELDS = 'name username avatarUrl headline';
+/* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
+   leaving it out does not omit the field — it sends `verified: false` for every
+   account, which is a wrong answer rather than a missing one. */
+const SUBMITTER_FIELDS = 'name username avatarUrl headline verified';
 
 /** Which item ids the current viewer has already upvoted. */
 async function votedIdsFor(userId: string | undefined, items: IItem[]): Promise<Set<string>> {
@@ -34,6 +44,7 @@ function buildFilter(query: ListItemsQuery): FilterQuery<IItem> {
   if (query.pricing) filter.pricing = query.pricing;
   if (query.tag) filter.tags = query.tag;
   if (query.featured !== undefined) filter.featured = query.featured;
+  if (query.futureGen !== undefined) filter.futureGen = query.futureGen;
 
   if (query.search) {
     const pattern = new RegExp(query.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
@@ -149,12 +160,18 @@ export async function getItem(req: Request, res: Response): Promise<void> {
   const item = await Item.findOne({ slug }).populate('submittedBy', SUBMITTER_FIELDS);
   if (!item) throw ApiError.notFound('We could not find that launch');
 
-  const [voted, related] = await Promise.all([
+  const [voted, related, siblings] = await Promise.all([
     votedIdsFor(req.user?._id.toString(), [item]),
     Item.find({ _id: { $ne: item._id }, category: item.category })
       .sort({ voteCount: -1 })
       .limit(3)
       .populate('submittedBy', SUBMITTER_FIELDS),
+    /* Every version of this product, newest first. Includes this one, so the
+       strip can mark the current entry without a second lookup. Trimmed to the
+       fields a strip renders rather than serialising whole launches. */
+    Item.find({ lineage: item.lineage ?? item._id })
+      .sort({ launchDate: -1 })
+      .select('slug name version launchDate voteCount ratingAvg ratingSum reviewCount'),
   ]);
 
   res.json({
@@ -162,6 +179,44 @@ export async function getItem(req: Request, res: Response): Promise<void> {
     data: {
       ...toItemResponse(item, voted),
       related: related.map((relatedItem) => toItemResponse(relatedItem)),
+      /* Omitted entirely when a product has only ever launched once — a
+         "versions" list of one is not a version history, and the client should
+         not have to special-case it. */
+      versions:
+        siblings.length > 1
+          ? siblings.map((sibling) => ({
+              slug: sibling.slug,
+              name: sibling.name,
+              version: sibling.version,
+              launchDate: sibling.launchDate,
+              voteCount: sibling.voteCount,
+              ratingAvg: Math.round(sibling.ratingAvg * 10) / 10,
+              reviewCount: sibling.reviewCount,
+              current: sibling.slug === item.slug,
+            }))
+          : [],
+      /*
+       * Rating across every version, derived rather than stored.
+       *
+       * A review is written about the version in front of the reviewer, so it
+       * stays on that version — but a reader asking "is this product any good"
+       * means the product, not the release. Summing the stored ratingSum and
+       * reviewCount answers that without a second source of truth to drift, the
+       * same reasoning the seller balance uses.
+       */
+      allVersions: siblings.reduce(
+        (total, sibling) => {
+          const reviews = total.reviewCount + sibling.reviewCount;
+          const sum = total.ratingSum + sibling.ratingSum;
+          return {
+            voteCount: total.voteCount + sibling.voteCount,
+            reviewCount: reviews,
+            ratingSum: sum,
+            ratingAvg: reviews > 0 ? Math.round((sum / reviews) * 10) / 10 : 0,
+          };
+        },
+        { voteCount: 0, reviewCount: 0, ratingSum: 0, ratingAvg: 0 },
+      ),
     },
   });
 }
@@ -169,6 +224,8 @@ export async function getItem(req: Request, res: Response): Promise<void> {
 export async function createItem(req: Request, res: Response): Promise<void> {
   const input = req.body as CreateItemInput;
   const launchDate = input.launchDate ?? new Date();
+
+  await assertCategory(input.category);
 
   const slug = await uniqueSlug(input.name, async (candidate) => {
     const exists = await Item.exists({ slug: candidate });
@@ -180,6 +237,8 @@ export async function createItem(req: Request, res: Response): Promise<void> {
     repoUrl: input.repoUrl || undefined,
     logoUrl: input.logoUrl || undefined,
     coverUrl: input.coverUrl || undefined,
+    wallColour: input.wallColour || undefined,
+    videoUrl: input.videoUrl || undefined,
     slug,
     launchDate,
     launchDateKey: toDateKey(launchDate),
@@ -188,39 +247,301 @@ export async function createItem(req: Request, res: Response): Promise<void> {
 
   await item.populate('submittedBy', SUBMITTER_FIELDS);
 
+  /* Revision 1: the launch as posted. Awaited, unlike badges, because without
+     it the first edit would have nothing to diff against and the history would
+     start at version 2 with no origin. */
+  await recordRevision({ item, editor: req.user!, role: 'owner' });
+
   void evaluateBadges(req.user!._id);
 
   res.status(201).json({ success: true, data: toItemResponse(item) });
 }
 
 export async function updateItem(req: Request, res: Response): Promise<void> {
-  const input = req.body as UpdateItemInput;
+  /* `note` describes the edit, not the launch — split off so the assign below
+     cannot write it onto the document. */
+  const { note, ...input } = req.body as UpdateItemInput;
   const item = await Item.findById(req.params.id);
   if (!item) throw ApiError.notFound('We could not find that launch');
 
   const user = req.user!;
-  if (item.submittedBy.toString() !== user._id.toString() && user.role !== 'admin') {
+  const isOwner = item.submittedBy.toString() === user._id.toString();
+  if (!isOwner && user.role !== 'admin') {
     throw ApiError.forbidden('Only the person who launched this can edit it');
   }
 
+  /*
+   * A launch is editable for a few hours, then it sets.
+   *
+   * This replaced a rule that froze only the name and category, and only once
+   * votes had arrived. That was aimed at the right problem — bait-and-switch,
+   * collecting votes as one thing and becoming another — but it solved it
+   * badly: a launch with no votes yet could be rewritten wholesale, and one
+   * with votes could still have its entire pitch swapped, which is most of what
+   * anybody actually reads.
+   *
+   * A window is simpler and covers both. Inside it everything is editable,
+   * because the first thing anybody does after publishing is find the typo.
+   * Outside it nothing is, because the text people voted on should be the text
+   * that stays — and changing the product has a supported path: ship a release.
+   *
+   * Staff are exempt. Moderation sometimes means fixing a launch long after the
+   * window shuts, and those edits are audited and appear in the public history.
+   */
+  const windowMs = env.editWindowHours * 60 * 60 * 1000;
+  const closesAt = new Date(item.launchDate.getTime() + windowMs);
+
+  if (isOwner && windowMs > 0 && Date.now() > closesAt.getTime()) {
+    throw ApiError.badRequest(
+      `Launches can be edited for ${env.editWindowHours} hours after posting. This one has set — ship a new version to change it.`,
+    );
+  }
+
+  if (input.category && input.category !== item.category) {
+    await assertCategory(input.category);
+  }
+
+  /* An empty wall colour is "go back to sampling my logo", not a blank hex.
+     Assigning undefined unsets the path; assigning '' would store a value that
+     every reader has to special-case. */
+  if (input.wallColour === '') input.wallColour = undefined;
+  if (input.videoUrl === '') input.videoUrl = undefined;
+
+  /* Taken before the assign below, or the diff compares the document to itself
+     and every edit records as "nothing changed". */
+  const previous = snapshotOf(item);
+
+  /* No launchDate here on purpose — the schema drops it, and moving a launch
+     between boards is an audited admin action. See rescheduleItem. */
   Object.assign(item, input);
-  if (input.launchDate) item.launchDateKey = toDateKey(input.launchDate);
 
   await item.save();
   await item.populate('submittedBy', SUBMITTER_FIELDS);
 
+  const version = await recordRevision({
+    item,
+    previous,
+    editor: user,
+    role: isOwner ? 'owner' : 'admin',
+    note,
+  });
+
   /* Only when staff edit a launch that is not theirs. The maker editing their
-     own is ordinary, and logging it would drown the entries that matter. */
-  if (user.role === 'admin' && item.submittedBy.toString() !== user._id.toString()) {
+     own is ordinary, and logging it would drown the entries that matter — the
+     revision history covers that case now, and it is public. */
+  if (!isOwner) {
     await audit(req, {
       action: 'item.edited',
       targetType: 'item',
       targetId: item._id,
       targetLabel: item.name,
       summary: `Edited "${item.name}", a launch belonging to someone else`,
-      after: { fields: Object.keys(input) },
+      after: { fields: Object.keys(input), revision: version },
     });
   }
+
+  res.json({ success: true, data: toItemResponse(item) });
+}
+
+/**
+ * The edit history of a launch, newest first.
+ *
+ * Public and unauthenticated on purpose. The point of keeping it is that a
+ * reader deciding whether to trust a launch can see whether its pitch has been
+ * rewritten since the votes arrived — a history only its author can read would
+ * not do that job.
+ *
+ * Fetched by slug to match every other read on this resource, so the item page
+ * does not have to hold an id to ask for it.
+ */
+export async function listItemRevisions(req: Request, res: Response): Promise<void> {
+  const item = await Item.findOne({ slug: req.params.slug }).select('_id');
+  if (!item) throw ApiError.notFound('We could not find that launch');
+
+  const revisions = await ItemRevision.find({ item: item._id })
+    .sort({ version: -1 })
+    .populate('editedBy', 'name username avatarUrl verified');
+
+  res.json({ success: true, data: revisions.map(toRevisionResponse) });
+}
+
+/**
+ * Ships a new version of an existing product.
+ *
+ * A release is a *new launch*, not an edit — its own slug, its own board day,
+ * its own votes, its own comments — tied to the previous one by `lineage`. That
+ * separation is what makes the model work:
+ *
+ *  - Votes are unique per (item, user), so a fresh document is what lets past
+ *    supporters vote again. Correct: it is a new launch day, not a second vote
+ *    on the old one.
+ *  - The daily board and the badge aggregations already key on `launchDateKey`,
+ *    so neither needs to learn anything about versions.
+ *  - Comments and reviews stay attached to the version they were written about,
+ *    which is the only place they are true.
+ *
+ * What deliberately does not carry over is the fundraise. Money state is never
+ * duplicated — a new version starts opted out, and the old raise keeps whatever
+ * it raised. `featured` does not carry either; that is Deck's call, not the
+ * maker's, and inheriting it would let one editorial decision run forever.
+ */
+export async function releaseItem(req: Request, res: Response): Promise<void> {
+  const { version, changelog, ...draft } = req.body as ReleaseItemInput;
+
+  await assertCategory(draft.category);
+
+  const from = await Item.findOne({ slug: req.params.slug });
+  if (!from) throw ApiError.notFound('We could not find that launch');
+
+  const user = req.user!;
+  const lineage = from.lineage ?? from._id;
+
+  /* The newest version in the chain, which is what a release actually extends —
+     releasing from an old version's page should still append to the end. */
+  const latest = await Item.findOne({ lineage }).sort({ launchDate: -1 });
+  if (!latest) throw ApiError.notFound('We could not find that launch');
+
+  const isOwner = latest.submittedBy.toString() === user._id.toString();
+  if (!isOwner && user.role !== 'admin') {
+    throw ApiError.forbidden('Only the person who launched this can ship a new version');
+  }
+
+  /*
+   * Cooldown, measured from the newest version rather than the one being
+   * released from. Otherwise the check is trivially skipped by opening the
+   * original launch's page and releasing from there.
+   *
+   * Admins are not exempt: the limit exists to keep the board honest, and staff
+   * shipping their own product are as capable of farming it as anyone.
+   */
+  const cooldownMs = env.releaseCooldownDays * 24 * 60 * 60 * 1000;
+  const readyAt = new Date(latest.launchDate.getTime() + cooldownMs);
+  if (cooldownMs > 0 && Date.now() < readyAt.getTime()) {
+    const daysLeft = Math.ceil((readyAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+    throw ApiError.badRequest(
+      `"${latest.name}" launched too recently. You can ship a new version in ${daysLeft} ${
+        daysLeft === 1 ? 'day' : 'days'
+      }.`,
+    );
+  }
+
+  const slug = await uniqueSlug(draft.name, async (candidate) => {
+    const exists = await Item.exists({ slug: candidate });
+    return exists !== null;
+  });
+
+  const launchDate = new Date();
+
+  const item = await Item.create({
+    ...draft,
+    repoUrl: draft.repoUrl || undefined,
+    logoUrl: draft.logoUrl || undefined,
+    coverUrl: draft.coverUrl || undefined,
+    wallColour: draft.wallColour || undefined,
+    videoUrl: draft.videoUrl || undefined,
+    slug,
+    version,
+    lineage,
+    supersedes: latest._id,
+    launchDate,
+    launchDateKey: toDateKey(launchDate),
+    /* The release belongs to whoever shipped it. An admin releasing on someone
+       else's behalf would otherwise silently take ownership of the product. */
+    submittedBy: latest.submittedBy,
+  });
+
+  await item.populate('submittedBy', SUBMITTER_FIELDS);
+
+  await recordRevision({
+    item,
+    editor: user,
+    role: isOwner ? 'owner' : 'admin',
+    note: changelog,
+  });
+
+  void evaluateBadges(latest.submittedBy);
+
+  res.status(201).json({ success: true, data: toItemResponse(item) });
+}
+
+/**
+ * Moves a launch to a different board day. Staff only, always recorded.
+ *
+ * This is the one operation that can rewrite history: `launchDateKey` decides
+ * which daily board a launch competes on, and the board-finish badges aggregate
+ * over it. Moving a launch that already has votes changes who topped that day.
+ *
+ * That is occasionally the right thing to do — a launch posted against the
+ * wrong timezone, a duplicate cleaned up — so the capability stays. What it
+ * does not get to be is silent, or something a maker can do to their own entry.
+ * Hence: admin gate, a mandatory reason, and an audit entry carrying both the
+ * old key and the new one.
+ */
+/**
+ * Puts a launch on Future Gen, or takes it off. Staff only, always audited.
+ *
+ * Not an edit, so it does not go through `updateItem` and does not create a
+ * revision: nothing the maker wrote changes, and a revision history full of
+ * "staff toggled a flag" entries would bury the edits that are actually about
+ * the product. Same reasoning as rescheduling, which lives next door.
+ */
+export async function setFutureGen(req: Request, res: Response): Promise<void> {
+  const { futureGen, note } = req.body as SetFutureGenInput;
+
+  const item = await Item.findById(req.params.id);
+  if (!item) throw ApiError.notFound('We could not find that launch');
+
+  if (item.futureGen === futureGen) {
+    throw ApiError.badRequest(
+      futureGen ? 'That launch is already on Future Gen' : 'That launch is not on Future Gen',
+    );
+  }
+
+  item.futureGen = futureGen;
+  await item.save();
+  await item.populate('submittedBy', SUBMITTER_FIELDS);
+
+  await audit(req, {
+    action: futureGen ? 'futuregen.added' : 'futuregen.removed',
+    targetType: 'item',
+    targetId: item._id,
+    targetLabel: item.name,
+    summary: futureGen
+      ? `Added "${item.name}" to Future Gen — ${note}`
+      : `Removed "${item.name}" from Future Gen — ${note}`,
+    after: { futureGen, note },
+  });
+
+  res.json({ success: true, data: toItemResponse(item) });
+}
+
+export async function rescheduleItem(req: Request, res: Response): Promise<void> {
+  const { launchDate, reason } = req.body as RescheduleItemInput;
+
+  const item = await Item.findById(req.params.id);
+  if (!item) throw ApiError.notFound('We could not find that launch');
+
+  const from = item.launchDateKey;
+  const to = toDateKey(launchDate);
+
+  if (from === to) {
+    throw ApiError.badRequest('That launch is already on that board');
+  }
+
+  item.launchDate = launchDate;
+  item.launchDateKey = to;
+  await item.save();
+  await item.populate('submittedBy', SUBMITTER_FIELDS);
+
+  await audit(req, {
+    action: 'item.rescheduled',
+    targetType: 'item',
+    targetId: item._id,
+    targetLabel: item.name,
+    summary: `Moved "${item.name}" from the ${from} board to ${to} — ${reason}`,
+    before: { launchDateKey: from },
+    after: { launchDateKey: to, voteCount: item.voteCount, reason },
+  });
 
   res.json({ success: true, data: toItemResponse(item) });
 }
@@ -238,9 +559,13 @@ export async function deleteItem(req: Request, res: Response): Promise<void> {
   /* Captured before the delete: afterwards there is nothing left to describe. */
   const label = item.name;
 
+  /* The history goes with the launch. It exists to hold an author to what they
+     published, not to outlive the publication — keeping the drafts of a deleted
+     launch would preserve exactly the text they asked to be rid of. */
   await Promise.all([
     Comment.deleteMany({ item: item._id }),
     Vote.deleteMany({ item: item._id }),
+    ItemRevision.deleteMany({ item: item._id }),
     item.deleteOne(),
   ]);
 

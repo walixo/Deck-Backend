@@ -39,6 +39,34 @@ export const env = {
    */
   platformFeePercent: Math.min(50, Math.max(0, Number(process.env.PLATFORM_FEE_PERCENT ?? 0))),
 
+  /*
+   * How long a launch must wait before it can ship a new version.
+   *
+   * Every release earns a fresh day on the board with its votes reset, which is
+   * the right reward for actually shipping something and an obvious thing to
+   * farm otherwise — "v1.0.1" every morning would put one product on the board
+   * permanently. Thirty days is short enough not to punish a real cadence and
+   * long enough that gaming it costs more attention than it returns.
+   *
+   * Product Hunt uses six months; Deck's board turns over daily rather than
+   * weekly, so the same reasoning lands on a shorter number.
+   */
+  releaseCooldownDays: Math.max(0, Number(process.env.RELEASE_COOLDOWN_DAYS ?? 30)),
+
+  /*
+   * How long after posting a launch stays editable.
+   *
+   * A launch goes live the instant it is submitted, which means the first thing
+   * a maker does after publishing is spot the typo. Without a window the only
+   * fix is to delete and repost, losing whatever votes and comments arrived in
+   * the meantime — so people either live with the mistake or game the board.
+   *
+   * Four hours is long enough to cover "I posted this and went to bed", short
+   * enough that the text somebody voted on is the text that stays. After it
+   * closes, changing the product means shipping a release.
+   */
+  editWindowHours: Math.max(0, Number(process.env.EDIT_WINDOW_HOURS ?? 4)),
+
   /** Floor on a single fundraise contribution, in minor units (₦1,000). */
   minContributionMinor: Number(process.env.MIN_CONTRIBUTION_MINOR ?? 100_000),
   /** Ceiling, mostly to keep a fat-fingered amount out of the payment provider. */

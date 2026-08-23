@@ -1,7 +1,9 @@
 /* eslint-disable no-console */
 import { connectDatabase, disconnectDatabase } from '../config/db';
 import { Comment } from '../models/Comment';
+import { Category } from '../models/Category';
 import { Item } from '../models/Item';
+import { ItemRevision } from '../models/ItemRevision';
 import { AdCampaign } from '../models/AdCampaign';
 import { AuditEvent } from '../models/AuditEvent';
 import { Contribution } from '../models/Contribution';
@@ -10,7 +12,9 @@ import { Payout } from '../models/Payout';
 import { Order } from '../models/Order';
 import { User } from '../models/User';
 import { Vote } from '../models/Vote';
+import { SEED_CATEGORIES } from '../constants';
 import { addDays, toDateKey } from '../utils/date';
+import { snapshotOf } from '../services/revisions';
 import { slugify } from '../utils/slug';
 import { seedComments, seedItems, seedUsers } from './data';
 import { seedMerch } from './merch.data';
@@ -32,6 +36,8 @@ async function seed(): Promise<void> {
     Comment.deleteMany({}),
     Vote.deleteMany({}),
     Item.deleteMany({}),
+    Category.deleteMany({}),
+    ItemRevision.deleteMany({}),
     User.deleteMany({}),
     MerchProduct.deleteMany({}),
     Order.deleteMany({}),
@@ -42,6 +48,9 @@ async function seed(): Promise<void> {
     AuditEvent.collection.drop().catch(() => undefined),
     Payout.deleteMany({}),
   ]);
+
+  console.log(`[seed] creating ${SEED_CATEGORIES.length} categories`);
+  await Category.insertMany(SEED_CATEGORIES.map((c) => ({ ...c })));
 
   console.log(`[seed] creating ${seedUsers.length} users`);
   // create() runs the password-hashing hook; insertMany would not.
@@ -78,6 +87,22 @@ async function seed(): Promise<void> {
         submittedBy: users[index % users.length]._id,
       };
     }),
+  );
+
+  /* Revision 1 for each: the launch as posted. Without it the first edit of a
+     seeded launch would mint a version 1 holding the edited text. */
+  console.log('[seed] recording launch history');
+  await ItemRevision.insertMany(
+    items.map((item, index) => ({
+      item: item._id,
+      version: 1,
+      snapshot: snapshotOf(item),
+      changed: [],
+      editedBy: item.submittedBy,
+      editedByName: users[index % users.length].name,
+      editedByRole: 'owner',
+      createdAt: item.launchDate,
+    })),
   );
 
   console.log('[seed] casting votes');

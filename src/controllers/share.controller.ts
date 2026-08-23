@@ -1,16 +1,10 @@
 import type { Request, Response } from 'express';
+import { ACCENTS, DEFAULT_ACCENT } from '../config/palette.generated';
 import { env } from '../config/env';
 import { Item } from '../models/Item';
 import { renderEmbedBadge } from '../services/embedBadge';
 import { ApiError } from '../utils/ApiError';
 
-/** Deck's accents, duplicated here because an SVG served to somebody else's
- *  page cannot read a CSS variable from Deck's stylesheet. */
-const ACCENTS: Record<string, string> = {
-  lavender: '#b8a9fa',
-  acid: '#c6ff3d',
-  grey: '#9c9c99',
-};
 
 /**
  * The embeddable badge for a launch.
@@ -29,7 +23,10 @@ export async function getEmbedBadge(req: Request, res: Response): Promise<void> 
   if (!item) throw ApiError.notFound('We could not find that launch');
 
   const style = String(req.query.style ?? 'votes');
-  const accent = ACCENTS[String(req.query.accent ?? 'lavender')] ?? ACCENTS.lavender;
+  /* An unknown name falls back rather than failing: badges live in other
+     people's READMEs, and a renamed accent should degrade to the default
+     colour, not to a broken image. */
+  const accent = ACCENTS[String(req.query.accent ?? DEFAULT_ACCENT)] ?? ACCENTS[DEFAULT_ACCENT];
   const dark = req.query.theme === 'dark';
 
   const value =

@@ -42,8 +42,15 @@ function widthOf(text: string, size: number): number {
 export interface EmbedBadgeOptions {
   label: string;
   value: string;
-  /** Accent fill for the value half. */
-  accent: string;
+  /**
+   * The value half's block: its fill and the ink that stays legible on it.
+   *
+   * The two travel together because Deck's accents sit at opposite ends of the
+   * lightness scale — black reads at 15.6:1 on lime and 1.9:1 on slate. A
+   * single hardcoded text colour cannot serve both, and the caller picks the
+   * fill from a query parameter, so the badge cannot assume which it will get.
+   */
+  accent: { fill: string; ink: string };
   dark: boolean;
 }
 
@@ -68,13 +75,13 @@ export function renderEmbedBadge({ label, value, accent, dark }: EmbedBadgeOptio
   <title>${escapeXml(`${label}: ${value}`)}</title>
   <g shape-rendering="crispEdges">
     <rect x="0" y="0" width="${labelWidth}" height="${height}" fill="${surface}"/>
-    <rect x="${labelWidth}" y="0" width="${valueWidth}" height="${height}" fill="${accent}"/>
+    <rect x="${labelWidth}" y="0" width="${valueWidth}" height="${height}" fill="${accent.fill}"/>
     <rect x="1" y="1" width="${total - 2}" height="${height - 2}" fill="none" stroke="${edge}" stroke-width="2"/>
     <rect x="${labelWidth}" y="1" width="2" height="${height - 2}" fill="${edge}"/>
   </g>
   <g font-family="${FONT}" font-size="${size}" font-weight="700" letter-spacing="0.6">
     <text x="${labelWidth / 2}" y="${height / 2}" fill="${labelInk}" text-anchor="middle" dominant-baseline="central">${escapeXml(label)}</text>
-    <text x="${labelWidth + valueWidth / 2}" y="${height / 2}" fill="#111111" text-anchor="middle" dominant-baseline="central">${escapeXml(value)}</text>
+    <text x="${labelWidth + valueWidth / 2}" y="${height / 2}" fill="${accent.ink}" text-anchor="middle" dominant-baseline="central">${escapeXml(value)}</text>
   </g>
 </svg>`;
 }

@@ -1,15 +1,22 @@
 import type mongoose from 'mongoose';
+import { env } from '../config/env';
+import { FUNDRAISE_MIN_COMMENTS, FUNDRAISE_MIN_VOTES } from '../constants';
 import type { IAdCampaign } from '../models/AdCampaign';
 import type { IComment } from '../models/Comment';
 import type { IContribution } from '../models/Contribution';
 import type { IItem } from '../models/Item';
+import type { IItemRevision } from '../models/ItemRevision';
 import type { IMerchProduct } from '../models/MerchProduct';
 import type { IOrder } from '../models/Order';
 import type { IPayout } from '../models/Payout';
+import type { IPost } from '../models/Post';
+import type { IReply, ITopic } from '../models/Topic';
 import type { IUser } from '../models/User';
 
 export interface PublicUser {
   id: string;
+  /** Shown as a mark beside the name wherever the account appears. */
+  verified: boolean;
   name: string;
   username: string;
   avatarUrl?: string;
@@ -42,6 +49,7 @@ function isPopulatedItem(value: unknown): value is PopulatedItemRef {
 export function toPublicUser(user: IUser): PublicUser {
   return {
     id: user._id.toString(),
+    verified: Boolean(user.verified),
     name: user.name,
     username: user.username,
     avatarUrl: user.avatarUrl,
@@ -72,14 +80,29 @@ export function toItemResponse(item: IItem, votedItemIds?: Set<string>) {
     repoUrl: item.repoUrl,
     logoUrl: item.logoUrl,
     coverUrl: item.coverUrl,
+    wallColour: item.wallColour,
+    videoUrl: item.videoUrl,
     gallery: item.gallery,
     makers: item.makers,
     launchDate: item.launchDate,
     launchDateKey: item.launchDateKey,
     featured: item.featured,
+    futureGen: item.futureGen,
     voteCount: item.voteCount,
     commentCount: item.commentCount,
     reviewCount: item.reviewCount,
+    /* Edits since posting. The item page uses it to decide whether a history
+       is worth offering, without paying for the history to find out. */
+    editCount: item.editCount ?? 0,
+    /* When the owner's edit window shuts. Sent so the UI can show a countdown
+       and hide the edit button rather than offering an action the server will
+       refuse. Staff ignore it. */
+    editableUntil: new Date(
+      item.launchDate.getTime() + env.editWindowHours * 60 * 60 * 1000,
+    ).toISOString(),
+    /* Version identity. `versions` on the detail payload carries the siblings. */
+    version: item.version,
+    lineage: item.lineage ? item.lineage.toString() : item._id.toString(),
     ratingAvg: Math.round(item.ratingAvg * 10) / 10,
     fundraise: toFundraiseResponse(item),
     createdAt: item.createdAt,
@@ -102,6 +125,33 @@ export function toCommentResponse(comment: IComment) {
     user: isPopulatedUser(author)
       ? toPublicUser(author)
       : { id: String(author as mongoose.Types.ObjectId) },
+  };
+}
+
+/**
+ * One entry in a launch's edit history.
+ *
+ * The whole snapshot goes over the wire, not just the changed fields: the
+ * client renders diffs by comparing a revision with the one below it, so it
+ * needs both sides. `editedByName` is sent alongside the populated user because
+ * it is the name as it was at the time — the populated record shows who they
+ * are now, which is a different and sometimes contradictory fact.
+ */
+export function toRevisionResponse(revision: IItemRevision) {
+  const editor = revision.editedBy as unknown;
+
+  return {
+    id: revision._id.toString(),
+    version: revision.version,
+    snapshot: revision.snapshot,
+    changed: revision.changed,
+    note: revision.note,
+    role: revision.editedByRole,
+    editedByName: revision.editedByName,
+    editedBy: isPopulatedUser(editor)
+      ? toPublicUser(editor)
+      : { id: String(editor as mongoose.Types.ObjectId) },
+    createdAt: revision.createdAt,
   };
 }
 
@@ -184,10 +234,34 @@ export function toPayoutResponse(payout: IPayout) {
 }
 
 /** The public state of a launch's raise — what the progress bar reads. */
-export function toFundraiseResponse(item: Pick<IItem, 'fundraise'>) {
-  const { enabled, targetMinor, raisedMinor, contributorCount, pitch, closedAt } = item.fundraise;
+export function toFundraiseResponse(item: Pick<IItem, 'fundraise' | 'voteCount' | 'commentCount'>) {
+  const { status, enabled, targetMinor, raisedMinor, contributorCount, pitch, closedAt } =
+    item.fundraise;
 
   return {
+    /*
+     * How close this launch is to being allowed to ask.
+     *
+     * Computed here rather than left to the client to work out from voteCount
+     * and commentCount, because the thresholds are the server's rule and a
+     * client that guesses them will eventually guess wrong — and the way it
+     * goes wrong is showing somebody an enabled button that the API then
+     * refuses. Sent to everyone, not just the owner: the numbers are already
+     * public, and a reader seeing "3 votes to go" is a reason to vote.
+     */
+    eligibility: {
+      votes: item.voteCount,
+      votesNeeded: FUNDRAISE_MIN_VOTES,
+      comments: item.commentCount,
+      commentsNeeded: FUNDRAISE_MIN_COMMENTS,
+      met:
+        item.voteCount >= FUNDRAISE_MIN_VOTES && item.commentCount >= FUNDRAISE_MIN_COMMENTS,
+    },
+    /* The maker's view of where their application stands. Safe to expose
+       publicly: it says a raise was applied for, not what was written in it. */
+    status,
+    reviewNote: item.fundraise.reviewNote,
+    appliedAt: item.fundraise.appliedAt,
     enabled,
     targetMinor,
     raisedMinor,
@@ -290,5 +364,75 @@ export function toServedAdResponse(campaign: IAdCampaign) {
     item: isPopulatedItem(item)
       ? { name: item.name, slug: item.slug, logoUrl: item.logoUrl }
       : null,
+  };
+}
+
+/* ----------------------------------------------------------------- blog --- */
+
+/** A post in a list: everything a card needs, without shipping the body. */
+export function toPostSummary(post: IPost) {
+  const author = post.author as unknown;
+
+  return {
+    id: post._id.toString(),
+    title: post.title,
+    slug: post.slug,
+    excerpt: post.excerpt,
+    coverUrl: post.coverUrl,
+    tags: post.tags,
+    status: post.status,
+    publishedAt: post.publishedAt,
+    readMinutes: post.readMinutes,
+    author: isPopulatedUser(author) ? toPublicUser(author) : null,
+  };
+}
+
+/** A post being read. The summary plus the thing people came for. */
+export function toPostResponse(post: IPost) {
+  return { ...toPostSummary(post), body: post.body };
+}
+
+/* ---------------------------------------------------------------- forum --- */
+
+/**
+ * A topic in the list.
+ *
+ * Carries `lastReplyBy` because the index's most useful column is "who spoke
+ * last" — it is what tells a reader at a glance whether a thread is a
+ * conversation or a post nobody answered. Deliberately omits the body: a
+ * twenty-row list would otherwise ship 160KB of prose nothing renders.
+ */
+export function toTopicSummary(topic: ITopic) {
+  const author = topic.author as unknown;
+  const lastReplyBy = topic.lastReplyBy as unknown;
+
+  return {
+    id: topic._id.toString(),
+    title: topic.title,
+    slug: topic.slug,
+    section: topic.section,
+    replyCount: topic.replyCount,
+    lastReplyAt: topic.lastReplyAt,
+    lastReplyBy: isPopulatedUser(lastReplyBy) ? toPublicUser(lastReplyBy) : null,
+    pinned: topic.pinned,
+    locked: topic.locked,
+    createdAt: topic.createdAt,
+    author: isPopulatedUser(author) ? toPublicUser(author) : null,
+  };
+}
+
+/** A topic being read. The summary plus the post itself. */
+export function toTopicResponse(topic: ITopic) {
+  return { ...toTopicSummary(topic), body: topic.body };
+}
+
+export function toReplyResponse(reply: IReply) {
+  const author = reply.author as unknown;
+
+  return {
+    id: reply._id.toString(),
+    body: reply.body,
+    createdAt: reply.createdAt,
+    author: isPopulatedUser(author) ? toPublicUser(author) : null,
   };
 }

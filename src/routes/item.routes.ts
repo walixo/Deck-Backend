@@ -5,10 +5,13 @@ import {
   deleteItem,
   getItem,
   getSpotlight,
+  listItemRevisions,
   listItems,
+  releaseItem,
   updateItem,
 } from '../controllers/item.controller';
 import {
+  applyForFundraise,
   createContribution,
   listContributions,
   updateFundraise,
@@ -19,10 +22,16 @@ import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import { createCommentSchema } from '../validators/comment.validators';
 import {
+  applyFundraiseSchema,
   createContributionSchema,
   updateFundraiseSchema,
 } from '../validators/fundraise.validators';
-import { createItemSchema, listItemsSchema, updateItemSchema } from '../validators/item.validators';
+import {
+  createItemSchema,
+  listItemsSchema,
+  releaseItemSchema,
+  updateItemSchema,
+} from '../validators/item.validators';
 
 const router = Router();
 
@@ -53,6 +62,14 @@ router.patch(
   validate(updateFundraiseSchema),
   asyncHandler(updateFundraise),
 );
+/* Applying is the only way a raise starts. Approval is a staff route. */
+router.post(
+  '/:slug/fundraise/apply',
+  asyncHandler(requireAuth),
+  validate(applyFundraiseSchema),
+  asyncHandler(applyForFundraise),
+);
+
 router.get('/:slug/contributions', asyncHandler(listContributions));
 router.post(
   '/:slug/contributions',
@@ -60,6 +77,18 @@ router.post(
   validate(createContributionSchema),
   asyncHandler(createContribution),
 );
+
+/* Shipping a new version. Creates a launch rather than editing one, so it is a
+   POST on the product rather than a PATCH on the entry. */
+router.post(
+  '/:slug/release',
+  asyncHandler(requireAuth),
+  validate(releaseItemSchema),
+  asyncHandler(releaseItem),
+);
+
+/* Public: the history is only useful as a trust signal if a reader can see it. */
+router.get('/:slug/revisions', asyncHandler(listItemRevisions));
 
 router.get('/:slug/comments', asyncHandler(listComments));
 router.post(

@@ -9,7 +9,10 @@ import { BadgeAward } from '../models/BadgeAward';
 import { evaluateBadges, metricsFor } from '../services/badges';
 import { ApiError } from '../utils/ApiError';
 
-const SUBMITTER_FIELDS = 'name username avatarUrl headline';
+/* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
+   leaving it out does not omit the field — it sends `verified: false` for every
+   account, which is a wrong answer rather than a missing one. */
+const SUBMITTER_FIELDS = 'name username avatarUrl headline verified';
 
 export async function getUserProfile(req: Request, res: Response): Promise<void> {
   const user = await User.findOne({ username: req.params.username.toLowerCase() });

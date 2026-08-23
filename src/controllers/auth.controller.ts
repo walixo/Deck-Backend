@@ -3,7 +3,12 @@ import { User } from '../models/User';
 import { toAuthenticatedUser } from '../serializers';
 import { ApiError } from '../utils/ApiError';
 import { signToken } from '../utils/jwt';
-import type { LoginInput, RegisterInput, UpdateProfileInput } from '../validators/auth.validators';
+import type {
+  ChangePasswordInput,
+  LoginInput,
+  RegisterInput,
+  UpdateProfileInput,
+} from '../validators/auth.validators';
 
 export async function register(req: Request, res: Response): Promise<void> {
   const { name, username, email, password } = req.body as RegisterInput;
@@ -58,4 +63,47 @@ export async function updateProfile(req: Request, res: Response): Promise<void> 
   await user.save();
 
   res.json({ success: true, data: toAuthenticatedUser(user) });
+}
+
+/**
+ * Changes the account's password.
+ *
+ * `req.user` cannot be used directly: the schema marks `password` as
+ * `select: false`, so the document the auth middleware attached has no hash on
+ * it and `comparePassword` would compare against undefined — which bcrypt
+ * rejects, meaning every attempt would fail with "that is not your current
+ * password". Refetching with `+password` is the whole reason this does its own
+ * lookup.
+ *
+ * The new value is assigned in plain text on purpose. The model's pre-save hook
+ * hashes anything that changed, so hashing here would store a hash of a hash
+ * and lock the account out permanently.
+ */
+export async function changePassword(req: Request, res: Response): Promise<void> {
+  const { currentPassword, newPassword } = req.body as ChangePasswordInput;
+
+  const user = await User.findById(req.user!._id).select('+password');
+  if (!user) throw ApiError.unauthorized('Please sign in again');
+
+  const matches = await user.comparePassword(currentPassword);
+  if (!matches) throw ApiError.badRequest('That is not your current password');
+
+  user.password = newPassword;
+  await user.save();
+
+  /*
+   * A fresh token goes back with the response.
+   *
+   * Not strictly required — Deck's tokens carry only a subject and a username,
+   * so the old one keeps working — but reissuing means the client is holding a
+   * token minted after the change rather than before it, which is the sane
+   * thing to have if session invalidation is ever added.
+   */
+  res.json({
+    success: true,
+    data: {
+      token: signToken({ sub: user._id.toString(), username: user.username }),
+      user: toAuthenticatedUser(user),
+    },
+  });
 }

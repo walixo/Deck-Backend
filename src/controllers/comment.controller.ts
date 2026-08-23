@@ -7,7 +7,10 @@ import { evaluateBadges } from '../services/badges';
 import { ApiError } from '../utils/ApiError';
 import type { CreateCommentInput } from '../validators/comment.validators';
 
-const AUTHOR_FIELDS = 'name username avatarUrl headline';
+/* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
+   leaving it out does not omit the field — it sends `verified: false` for every
+   account, which is a wrong answer rather than a missing one. */
+const AUTHOR_FIELDS = 'name username avatarUrl headline verified';
 
 /** Recomputes comment/review counters from the source of truth. */
 async function syncItemCounters(item: IItem): Promise<void> {

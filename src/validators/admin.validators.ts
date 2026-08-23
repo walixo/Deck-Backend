@@ -44,3 +44,17 @@ export type ListUsersQuery = z.infer<typeof listUsersSchema>;
 export type UpdateRoleInput = z.infer<typeof updateRoleSchema>;
 export type ListOrdersQuery = z.infer<typeof listOrdersSchema>;
 export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusSchema>;
+
+/**
+ * Granting or removing a verification mark.
+ *
+ * A reason is required in both directions. The mark is a public claim Deck
+ * makes about a person, so the trail needs to say what it was based on — and
+ * removing one is the more consequential half, since somebody relied on it.
+ */
+export const verifyUserSchema = z.object({
+  verified: z.boolean(),
+  reason: z.string().trim().min(4, 'Say what this is based on').max(200),
+});
+
+export type VerifyUserInput = z.infer<typeof verifyUserSchema>;

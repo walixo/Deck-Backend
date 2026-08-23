@@ -17,6 +17,7 @@ import type {
   ListAuditQuery,
   ListUsersQuery,
   UpdateRoleInput,
+  VerifyUserInput,
   UpdateOrderStatusInput,
 } from '../validators/admin.validators';
 
@@ -321,4 +322,43 @@ export async function listAuditEvents(req: Request, res: Response): Promise<void
       hasMore: skip + events.length < total,
     },
   });
+}
+
+/**
+ * Grants or removes a verification mark. Staff only, always recorded.
+ *
+ * The mark is a public claim Deck makes on somebody's behalf — that the account
+ * is who it says it is — so both directions carry a mandatory reason into the
+ * audit trail. Removing one matters more than granting it: people will have
+ * relied on the mark, and "why did this disappear" needs an answer that is not
+ * somebody's memory.
+ */
+export async function setUserVerified(req: Request, res: Response): Promise<void> {
+  const { verified, reason } = req.body as VerifyUserInput;
+
+  const user = await User.findById(req.params.id);
+  if (!user) throw ApiError.notFound('We could not find that account');
+
+  if (user.verified === verified) {
+    res.json({ success: true, data: { ...toPublicUser(user), role: user.role } });
+    return;
+  }
+
+  user.verified = verified;
+  user.verifiedAt = verified ? new Date() : null;
+  await user.save();
+
+  await audit(req, {
+    action: verified ? 'user.verified' : 'user.unverified',
+    targetType: 'user',
+    targetId: user._id,
+    targetLabel: user.name,
+    summary: verified
+      ? `Verified @${user.username} — ${reason}`
+      : `Removed verification from @${user.username} — ${reason}`,
+    before: { verified: !verified },
+    after: { verified, reason },
+  });
+
+  res.json({ success: true, data: { ...toPublicUser(user), role: user.role } });
 }

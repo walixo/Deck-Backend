@@ -12,6 +12,9 @@ export interface IUser extends Document {
   headline?: string;
   websiteUrl?: string;
   role: 'user' | 'admin';
+  /** Staff-granted mark that this account is who it says it is. */
+  verified: boolean;
+  verifiedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidate: string): Promise<boolean>;
@@ -44,6 +47,18 @@ const userSchema = new Schema<IUser>(
     headline: { type: String, trim: true, maxlength: 80 },
     websiteUrl: { type: String, trim: true },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
+
+    /*
+     * Verification is about identity, not standing. It says Deck checked that
+     * this account belongs to who it claims — nothing about whether their
+     * launches are any good, which is what votes and reviews are for.
+     *
+     * Deliberately separate from `role`: a verified account is usually not
+     * staff, and conflating the two would either hand badges to admins or
+     * privileges to verified makers.
+     */
+    verified: { type: Boolean, default: false, index: true },
+    verifiedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
