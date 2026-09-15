@@ -156,6 +156,49 @@ export const MAX_CONTRIBUTION_MINOR = env.maxContributionMinor;
 export const FUNDRAISE_MIN_VOTES = 20;
 export const FUNDRAISE_MIN_COMMENTS = 3;
 
+/* ------------------------------------------------------ custom prints --- */
+
+/**
+ * What Deck charges to print somebody's own artwork, in minor units.
+ *
+ * Server-side and nowhere else, exactly like the ad rate card: the client picks
+ * a product and the price is derived here. A tampered payload can change what
+ * somebody orders, never what it costs.
+ *
+ * `inkSurcharge` is charged on heavy coverage — a design that inks most of the
+ * garment genuinely costs more to produce, and pricing it the same as a small
+ * chest mark means the small ones subsidise the large ones.
+ */
+export const CUSTOM_PRINT_PRICING = {
+  sticker: { baseMinor: 120_000, label: 'Die-cut sticker', apparel: false },
+  'sticker-sheet': { baseMinor: 350_000, label: 'Sticker sheet', apparel: false },
+  tee: { baseMinor: 950_000, label: 'T-shirt', apparel: true },
+  hoodie: { baseMinor: 1_850_000, label: 'Hoodie', apparel: true },
+} as const;
+
+/** Added when ink coverage is above the threshold. See analyseArtwork. */
+export const CUSTOM_INK_SURCHARGE_MINOR = 250_000;
+export const CUSTOM_INK_SURCHARGE_ABOVE = 0.55;
+
+/** Apparel sizes Deck prints. Stickers have no size. */
+export const CUSTOM_SIZES = ['XS', 'S', 'M', 'L', 'XL', '2XL'] as const;
+
+/* --------------------------------------------------------- acquisitions --- */
+
+/**
+ * Deck's cut of an acquisition, as a percentage of the agreed price.
+ *
+ * Separate from PLATFORM_FEE_PERCENT, which is the shop's. They are different
+ * businesses with different economics — a t-shirt order settles in days and
+ * costs Deck a payment fee, whereas brokering a product sale is a review, a
+ * listing, and a negotiation that may run for months. One constant serving both
+ * would mean changing shop pricing every time this moved.
+ *
+ * The rate in force is copied onto each deal when a bid is accepted, so
+ * changing this never rewrites what a past sale owed.
+ */
+export const ACQUISITION_FEE_PERCENT = Number(process.env.ACQUISITION_FEE_PERCENT ?? 8);
+
 /* ------------------------------------------------------------------ ads --- */
 
 /** Where a paid placement can appear. One live ad per placement at a time. */
@@ -249,6 +292,16 @@ export const AUDIT_ACTIONS = [
   'topic.deleted',
   'topic.moderated',
   'reply.deleted',
+  'acquisition.approved',
+  'acquisition.rejected',
+  'acquisition.sold',
+  'acquisition.removed',
+  'custom.approved',
+  'custom.rejected',
+  'game.approved',
+  'game.rejected',
+  'game.edited',
+  'game.removed',
   'ad.approved',
   'ad.rejected',
 ] as const;
@@ -265,5 +318,8 @@ export const AUDIT_TARGETS = [
   'ad',
   'post',
   'topic',
+  'acquisition',
+  'custom',
+  'game',
 ] as const;
 export type AuditTarget = (typeof AUDIT_TARGETS)[number];

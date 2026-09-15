@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createAcquisition } from '../controllers/acquisition.controller';
 import { createComment, listComments } from '../controllers/comment.controller';
 import {
   createItem,
@@ -18,6 +19,7 @@ import {
 } from '../controllers/fundraise.controller';
 import { toggleVote } from '../controllers/vote.controller';
 import { optionalAuth, requireAuth } from '../middleware/auth';
+import { createAcquisitionSchema } from '../validators/acquisition.validators';
 import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import { createCommentSchema } from '../validators/comment.validators';
@@ -88,6 +90,16 @@ router.post(
 );
 
 /* Public: the history is only useful as a trust signal if a reader can see it. */
+/* Listing a launch for acquisition hangs off the launch, because that is the
+   thing being sold and the owner check is against its submitter. Everything
+   afterwards lives under /acquisitions. */
+router.post(
+  '/:slug/acquisition',
+  asyncHandler(requireAuth),
+  validate(createAcquisitionSchema),
+  asyncHandler(createAcquisition),
+);
+
 router.get('/:slug/revisions', asyncHandler(listItemRevisions));
 
 router.get('/:slug/comments', asyncHandler(listComments));

@@ -126,6 +126,19 @@ export const listItemsSchema = z.object({
     .enum(['true', 'false'])
     .transform((value) => value === 'true')
     .optional(),
+  /*
+   * A board day, a month, or a year — matched as a prefix of `launchDateKey`.
+   *
+   * One parameter rather than three because the archive rail cascades through
+   * exactly those levels, and `2026`, `2026-08` and `2026-08-15` are the same
+   * question asked at three depths. Anchored and length-checked so it can only
+   * ever be a prefix, never a pattern.
+   */
+  on: z
+    .string()
+    .trim()
+    .regex(/^\d{4}(-\d{2}(-\d{2})?)?$/, 'Dates look like 2026, 2026-08 or 2026-08-15')
+    .optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(48).default(12),
 });

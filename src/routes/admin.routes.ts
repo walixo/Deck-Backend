@@ -17,6 +17,11 @@ import {
   listFundraiseApplications,
   reviewFundraise,
 } from '../controllers/fundraise.controller';
+import {
+  listAcquisitionApplications,
+  reviewAcquisition,
+} from '../controllers/acquisition.controller';
+import { listCustomQueue, reviewCustomDesign } from '../controllers/custom.controller';
 import { rescheduleItem, setFutureGen } from '../controllers/item.controller';
 import {
   createPost,
@@ -24,6 +29,7 @@ import {
   listAllPosts,
   updatePost,
 } from '../controllers/post.controller';
+import { listAllGames, reviewGame } from '../controllers/game.controller';
 import { requireAuth } from '../middleware/auth';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
@@ -41,8 +47,11 @@ import {
   updateCategorySchema,
 } from '../validators/category.validators';
 import { reviewFundraiseSchema } from '../validators/fundraise.validators';
+import { reviewAcquisitionSchema } from '../validators/acquisition.validators';
+import { reviewCustomDesignSchema } from '../validators/custom.validators';
 import { rescheduleItemSchema, setFutureGenSchema } from '../validators/item.validators';
 import { createPostSchema, updatePostSchema } from '../validators/post.validators';
+import { reviewGameSchema } from '../validators/game.validators';
 
 const router = Router();
 
@@ -89,12 +98,36 @@ router.post('/categories', validate(createCategorySchema), asyncHandler(createCa
 router.patch('/categories/:id', validate(updateCategorySchema), asyncHandler(updateCategory));
 router.delete('/categories/:id', asyncHandler(deleteCategory));
 
+/* Acquisitions: the queue, and the yes/no on each. Approving one puts Deck's
+   name beside somebody's asking price, so it is reviewed like a fundraise. */
+router.get('/acquisitions', asyncHandler(listAcquisitionApplications));
+router.patch(
+  '/acquisitions/:slug',
+  validate(reviewAcquisitionSchema),
+  asyncHandler(reviewAcquisition),
+);
+
+/* Custom prints. The one review that ends with a parcel in the post carrying
+   Deck's return address, so it is gated and audited like the money ones. */
+router.get('/custom', asyncHandler(listCustomQueue));
+router.patch(
+  '/custom/:reference',
+  validate(reviewCustomDesignSchema),
+  asyncHandler(reviewCustomDesign),
+);
+
 router.get('/fundraises', asyncHandler(listFundraiseApplications));
 router.patch(
   '/fundraises/:slug',
   validate(reviewFundraiseSchema),
   asyncHandler(reviewFundraise),
 );
+
+/* The arcade's review queue. Approving a game puts somebody else's page one
+   click from Deck's, so it goes through the same gate as everything else that
+   leaves the building. */
+router.get('/games', asyncHandler(listAllGames));
+router.patch('/games/:id/review', validate(reviewGameSchema), asyncHandler(reviewGame));
 
 router.get('/posts', asyncHandler(listAllPosts));
 router.post('/posts', validate(createPostSchema), asyncHandler(createPost));

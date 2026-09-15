@@ -1,12 +1,15 @@
 import { Router } from 'express';
-import { getStats, getTags } from '../controllers/meta.controller';
+import { getExchangeRates, getStats, getTags } from '../controllers/meta.controller';
 import { listCategories } from '../controllers/category.controller';
 import { asyncHandler } from '../utils/asyncHandler';
+import acquisitionRoutes from './acquisition.routes';
 import adRoutes from './ad.routes';
 import adminRoutes from './admin.routes';
 import authRoutes from './auth.routes';
 import commentRoutes from './comment.routes';
+import customRoutes from './custom.routes';
 import forumRoutes from './forum.routes';
+import gameRoutes from './game.routes';
 import itemRoutes from './item.routes';
 import postRoutes from './post.routes';
 import leaderboardRoutes from './leaderboard.routes';
@@ -28,15 +31,19 @@ router.get('/health', (_req, res) => {
 router.get('/categories', asyncHandler(listCategories));
 router.get('/tags', asyncHandler(getTags));
 router.get('/stats', asyncHandler(getStats));
+router.get('/rates', asyncHandler(getExchangeRates));
 
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
 router.use('/ads', adRoutes);
+router.use('/acquisitions', acquisitionRoutes);
 router.use('/share', shareRoutes);
 router.use('/items', itemRoutes);
 router.use('/posts', postRoutes);
 router.use('/comments', commentRoutes);
 router.use('/forum', forumRoutes);
+router.use('/games', gameRoutes);
+router.use('/custom', customRoutes);
 router.use('/leaderboard', leaderboardRoutes);
 router.use('/users', userRoutes);
 router.use('/uploads', uploadRoutes);

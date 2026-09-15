@@ -46,6 +46,18 @@ function buildFilter(query: ListItemsQuery): FilterQuery<IItem> {
   if (query.featured !== undefined) filter.featured = query.featured;
   if (query.futureGen !== undefined) filter.futureGen = query.futureGen;
 
+  /*
+   * Date scoping, as a prefix match on the denormalised day key.
+   *
+   * A full day is an equality match; a year or month is an anchored prefix. The
+   * value is already validated to be digits and dashes only, so nothing a
+   * caller sends can become a regex — and the field is indexed, so an anchored
+   * prefix still uses it.
+   */
+  if (query.on) {
+    filter.launchDateKey = query.on.length === 10 ? query.on : new RegExp(`^${query.on}`);
+  }
+
   if (query.search) {
     const pattern = new RegExp(query.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     filter.$or = [

@@ -2,19 +2,110 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-function required(key: string, fallback?: string): string {
-  const value = process.env[key] ?? fallback;
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${key}`);
+const production = (process.env.NODE_ENV ?? 'development') === 'production';
+
+/** The stand-ins that make a fresh clone run with no setup. */
+const DEV_MONGO_URI = 'mongodb://127.0.0.1:27017/deck';
+const DEV_JWT_SECRET = 'deck-dev-secret';
+
+/**
+ * A value that may fall back in development and must be set in production.
+ *
+ * Checking for *absence alone* was the bug this replaces: with a fallback
+ * supplied, the old guard could never fire, so a deploy that forgot
+ * `JWT_SECRET` booted happily and signed its tokens with a string published in
+ * this repository. Anybody who could read the source could mint a staff
+ * session, and nothing would look wrong.
+ *
+ * Failing to boot is the right outcome. A server that will not start is
+ * noticed in the first minute; one that starts with a known secret is not
+ * noticed at all.
+ *
+ * What it checks is *presence*, not the value. Refusing a value because it
+ * matches the development default is a check I wrote and then removed: it
+ * cannot tell "fell back to localhost" from "deliberately pointed at the
+ * database on this same box", and the second is a perfectly good way to run a
+ * single server. Where the value itself is the danger rather than the absence
+ * — the signing secret — that is policed separately, below.
+ */
+function requiredInProduction(key: string, devFallback: string): string {
+  const value = process.env[key];
+
+  if (production && !value) {
+    throw new Error(
+      `${key} must be set in production. The development fallback is not a ` +
+        `default worth inheriting by accident.`,
+    );
   }
-  return value;
+
+  return value ?? devFallback;
+}
+
+/**
+ * How short a signing secret may be before it is not one.
+ *
+ * A token is only as private as the string that signed it, and a memorable
+ * password is brute-forced offline in an afternoon. 32 characters of anything
+ * random clears it; `openssl rand -base64 48` is the usual way to get some.
+ */
+const MIN_SECRET_LENGTH = 32;
+
+function readJwtSecret(): string {
+  const secret = requiredInProduction('JWT_SECRET', DEV_JWT_SECRET);
+
+  /* The one value where the *content* is the vulnerability: this exact string
+     is in the repository, so setting it deliberately is no better than
+     forgetting to set anything. */
+  if (production && secret === DEV_JWT_SECRET) {
+    throw new Error(
+      'JWT_SECRET is still the development value, which is published in this ' +
+        'repository. Anyone who can read the source could forge a session.',
+    );
+  }
+
+  if (production && secret.length < MIN_SECRET_LENGTH) {
+    throw new Error(
+      `JWT_SECRET must be at least ${MIN_SECRET_LENGTH} characters in production ` +
+        `(this one is ${secret.length}). Try: openssl rand -base64 48`,
+    );
+  }
+
+  return secret;
+}
+
+export interface CloudinaryConfig {
+  cloudName: string;
+  apiKey: string;
+  apiSecret: string;
+}
+
+function readCloudinary(): CloudinaryConfig | null {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+  const given = [cloudName, apiKey, apiSecret].filter(Boolean).length;
+  if (given === 0) return null;
+
+  if (given < 3) {
+    throw new Error(
+      'Cloudinary is half-configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY ' +
+        'and CLOUDINARY_API_SECRET together, or none of them to store images on disk.',
+    );
+  }
+
+  return {
+    cloudName: cloudName as string,
+    apiKey: apiKey as string,
+    apiSecret: apiSecret as string,
+  };
 }
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: Number(process.env.PORT ?? 4000),
-  mongoUri: required('MONGODB_URI', 'mongodb://127.0.0.1:27017/deck'),
-  jwtSecret: required('JWT_SECRET', 'deck-dev-secret'),
+  mongoUri: requiredInProduction('MONGODB_URI', DEV_MONGO_URI),
+  jwtSecret: readJwtSecret(),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
   /* Paystack. The secret key is server-only and never sent to the browser;
      without it the shop still runs, it just cannot take card payments. */
@@ -79,6 +170,18 @@ export const env = {
    * the audit trail rather than inform it.
    */
   trustProxy: process.env.TRUST_PROXY ? Number(process.env.TRUST_PROXY) || 1 : (false as const),
+
+  /*
+   * Cloudinary, or nothing.
+   *
+   * All three or none: two out of three is a typo, and a typo that silently
+   * falls back to writing images onto a disk that gets wiped on the next deploy
+   * is the kind of thing nobody notices until the logos have gone. Absent
+   * entirely is a legitimate configuration — local development stores to disk
+   * and needs no account — so the check is for a *partial* answer, not a
+   * missing one.
+   */
+  cloudinary: readCloudinary(),
 
   clientOrigins: (process.env.CLIENT_ORIGIN ?? 'http://localhost:5173')
     .split(',')

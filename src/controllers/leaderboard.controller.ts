@@ -80,3 +80,58 @@ export async function getLeaderboardDates(_req: Request, res: Response): Promise
     data: rows.map((row) => ({ date: row._id, launches: row.count, votes: row.votes })),
   });
 }
+
+/**
+ * Every day Deck has ever had launches on, grouped into years and months.
+ *
+ * Feeds the archive rail on Discover. Structured rather than flat because the
+ * rail cascades — a reader opens a year, then a month, then a day — and doing
+ * that grouping in the browser would mean shipping every date and rebuilding
+ * the tree on each render.
+ *
+ * `$limit` is deliberately absent, unlike `getLeaderboardDates`, which caps at
+ * 14 because it draws a strip. An archive whose whole purpose is going back in
+ * time cannot stop at a fortnight. The result is one row per day Deck has ever
+ * been used, which stays small for years — and it is a single grouped scan of
+ * an indexed field, not a per-day query.
+ */
+export async function getLaunchArchive(_req: Request, res: Response): Promise<void> {
+  const rows = await Item.aggregate<{ _id: string; count: number }>([
+    { $group: { _id: '$launchDateKey', count: { $sum: 1 } } },
+    { $sort: { _id: -1 } },
+  ]);
+
+  /* Keys are YYYY-MM-DD strings, so year and month are a slice rather than a
+     date parse — and a slice cannot drift by a timezone the way `new Date()`
+     on a bare date string can. */
+  const years = new Map<string, Map<string, { date: string; launches: number }[]>>();
+  let total = 0;
+
+  for (const row of rows) {
+    if (!row._id) continue;
+    const year = row._id.slice(0, 4);
+    const month = row._id.slice(5, 7);
+
+    if (!years.has(year)) years.set(year, new Map());
+    const months = years.get(year)!;
+    if (!months.has(month)) months.set(month, []);
+    months.get(month)!.push({ date: row._id, launches: row.count });
+    total += row.count;
+  }
+
+  res.json({
+    success: true,
+    data: {
+      total,
+      years: [...years].map(([year, months]) => ({
+        year,
+        launches: [...months.values()].flat().reduce((sum, day) => sum + day.launches, 0),
+        months: [...months].map(([month, days]) => ({
+          month,
+          launches: days.reduce((sum, day) => sum + day.launches, 0),
+          days,
+        })),
+      })),
+    },
+  });
+}

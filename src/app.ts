@@ -11,6 +11,35 @@ import { asyncHandler } from './utils/asyncHandler';
 
 export function createApp(): Application {
   const app = express();
+
+  /* Express announces itself in a header by default. It tells an attacker
+     which exploit list to open and tells nobody else anything. */
+  app.disable('x-powered-by');
+
+  /*
+   * Response headers, by hand rather than by dependency.
+   *
+   * These five are the ones that cost nothing and break nothing: refuse
+   * MIME-sniffing, do not leak full URLs to other origins, refuse to be framed,
+   * turn off device APIs the site never asks for, and — in production only,
+   * where there is TLS to insist on — require HTTPS for a year.
+   *
+   * No Content-Security-Policy here on purpose. The frontend is served by
+   * Vercel rather than by this process, so its CSP belongs in `vercel.json`
+   * where the actual script origins are known; and a policy written blind
+   * would break the consent-gated AdSense embed the first time somebody set
+   * `VITE_ADSENSE_CLIENT`.
+   */
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    if (env.isProduction) {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
   /* Decided up front: the root route needs to know, and it is registered
      before the mount happens. */
   const frontendMounted = hasFrontendBuild();

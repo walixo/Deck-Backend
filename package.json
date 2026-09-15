@@ -2,8 +2,11 @@
   "name": "deck-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "REST API for Deck \u2014 launch, share, and discover new tech items",
+  "description": "REST API for Deck — launch, share, and discover new tech items",
   "main": "dist/server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
@@ -14,13 +17,19 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "create-admin": "tsx src/scripts/create-admin.ts",
+    "create-admin:prod": "node dist/scripts/create-admin.js",
+    "check:cloudinary": "tsx src/scripts/check-cloudinary.ts",
+    "check:cloudinary:prod": "node dist/scripts/check-cloudinary.js",
     "backfill-revisions": "tsx src/scripts/backfill-revisions.ts",
     "seed-artwork": "tsx src/scripts/seed-artwork.ts",
     "seed-future-gen": "tsx src/scripts/seed-future-gen.ts",
-    "seed-forum": "tsx src/scripts/seed-forum.ts"
+    "seed-forum": "tsx src/scripts/seed-forum.ts",
+    "seed-acquisitions": "tsx src/scripts/seed-acquisitions.ts",
+    "seed-games": "tsx src/scripts/seed-games.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.11.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",

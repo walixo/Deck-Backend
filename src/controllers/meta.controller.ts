@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { DISPLAY_CURRENCIES, getRates } from '../services/rates';
 import { Item } from '../models/Item';
 import { User } from '../models/User';
 import { Vote } from '../models/Vote';
@@ -25,4 +26,17 @@ export async function getTags(_req: Request, res: Response): Promise<void> {
   ]);
 
   res.json({ success: true, data: rows.map((row) => ({ tag: row._id, count: row.count })) });
+}
+
+
+/**
+ * Display exchange rates.
+ *
+ * Public and uncredentialled: these are the same numbers for everybody, and
+ * gating them behind a session would only mean signed-out readers see naira
+ * they cannot read. Cached upstream for a day — see services/rates.
+ */
+export async function getExchangeRates(_req: Request, res: Response): Promise<void> {
+  const table = await getRates();
+  res.json({ success: true, data: { ...table, currencies: DISPLAY_CURRENCIES } });
 }

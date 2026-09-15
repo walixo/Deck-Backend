@@ -1,9 +1,17 @@
 import type mongoose from 'mongoose';
 import { env } from '../config/env';
-import { FUNDRAISE_MIN_COMMENTS, FUNDRAISE_MIN_VOTES } from '../constants';
+import {
+  ACQUISITION_FEE_PERCENT,
+  FUNDRAISE_MIN_COMMENTS,
+  FUNDRAISE_MIN_VOTES,
+} from '../constants';
+import type { IAcquisition, IBid } from '../models/Acquisition';
 import type { IAdCampaign } from '../models/AdCampaign';
 import type { IComment } from '../models/Comment';
+import type { ICustomDesign } from '../models/CustomDesign';
 import type { IContribution } from '../models/Contribution';
+import type { IGame } from '../models/Game';
+import type { IScore } from '../models/Score';
 import type { IItem } from '../models/Item';
 import type { IItemRevision } from '../models/ItemRevision';
 import type { IMerchProduct } from '../models/MerchProduct';
@@ -402,6 +410,62 @@ export function toPostResponse(post: IPost) {
  * conversation or a post nobody answered. Deliberately omits the body: a
  * twenty-row list would otherwise ship 160KB of prose nothing renders.
  */
+/** First ~180 characters of a post, cut at a word boundary. */
+function excerptOf(body: string): string {
+  const flat = body.replace(/\s+/g, ' ').trim();
+  if (flat.length <= 180) return flat;
+  const cut = flat.slice(0, 180);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${cut.slice(0, lastSpace > 120 ? lastSpace : 180)}…`;
+}
+
+/**
+ * A game on the shelf.
+ *
+ * `playUrl` is sent as-is for external games and null for Deck's own, and
+ * `component` the other way round, so the client's play button is a switch on
+ * `kind` rather than a guess about which field happens to be filled.
+ */
+export function toGameSummary(game: IGame) {
+  const author = game.author as unknown;
+
+  return {
+    id: game._id.toString(),
+    title: game.title,
+    slug: game.slug,
+    tagline: game.tagline,
+    genre: game.genre,
+    coverUrl: game.coverUrl,
+    kind: game.kind,
+    component: game.component,
+    playUrl: game.playUrl,
+    embeddable: game.embeddable,
+    status: game.status,
+    reviewNote: game.reviewNote,
+    plays: game.plays,
+    featured: game.featured,
+    createdAt: game.createdAt,
+    author: isPopulatedUser(author) ? toPublicUser(author) : null,
+  };
+}
+
+/** One game's page: the shelf entry plus the write-up. */
+export function toGameResponse(game: IGame) {
+  return { ...toGameSummary(game), description: game.description };
+}
+
+/** One row on a leaderboard. `rank` is computed by the caller so ties share it. */
+export function toScoreResponse(entry: IScore, rank: number) {
+  const user = entry.user as unknown;
+  return {
+    id: entry._id.toString(),
+    rank,
+    score: entry.score,
+    achievedAt: entry.achievedAt,
+    player: isPopulatedUser(user) ? toPublicUser(user) : null,
+  };
+}
+
 export function toTopicSummary(topic: ITopic) {
   const author = topic.author as unknown;
   const lastReplyBy = topic.lastReplyBy as unknown;
@@ -411,6 +475,15 @@ export function toTopicSummary(topic: ITopic) {
     title: topic.title,
     slug: topic.slug,
     section: topic.section,
+    /*
+     * The opening of the post, for the timeline.
+     *
+     * Trimmed server-side rather than sending the body and clamping in CSS: a
+     * page of twenty topics would otherwise ship every full post — up to 160KB
+     * of prose — to render two lines of each. Cut on a word boundary so the
+     * preview never ends mid-word.
+     */
+    excerpt: excerptOf(topic.body),
     replyCount: topic.replyCount,
     lastReplyAt: topic.lastReplyAt,
     lastReplyBy: isPopulatedUser(lastReplyBy) ? toPublicUser(lastReplyBy) : null,
@@ -434,5 +507,122 @@ export function toReplyResponse(reply: IReply) {
     body: reply.body,
     createdAt: reply.createdAt,
     author: isPopulatedUser(author) ? toPublicUser(author) : null,
+  };
+}
+
+/* --------------------------------------------------------- acquisitions --- */
+
+/**
+ * A listing on the board.
+ *
+ * Bid amounts are never on this shape — only the count and the highest. The
+ * seller's own view adds the list; see getAcquisition for why the room does
+ * not get it.
+ *
+ * `feeMinor` is computed from the asking price so the listing can state what
+ * Deck would take, rather than making a seller work out 8% of their own number.
+ */
+export function toAcquisitionSummary(listing: IAcquisition) {
+  const item = listing.item as unknown;
+  const seller = listing.seller as unknown;
+  const feeMinor = Math.round((listing.askingMinor * ACQUISITION_FEE_PERCENT) / 100);
+
+  return {
+    id: listing._id.toString(),
+    slug: listing.slug,
+    status: listing.status,
+    askingMinor: listing.askingMinor,
+    currency: listing.currency,
+    negotiable: listing.negotiable,
+    assets: listing.assets,
+    monthlyRevenueMinor: listing.monthlyRevenueMinor,
+    monthlyCostMinor: listing.monthlyCostMinor,
+    activeUsers: listing.activeUsers,
+    bidCount: listing.bidCount,
+    highestBidMinor: listing.highestBidMinor,
+    feePercent: ACQUISITION_FEE_PERCENT,
+    feeMinor,
+    /* What the seller would keep at the asking price. The figure they actually
+       care about, and the one they would otherwise get wrong. */
+    netMinor: listing.askingMinor - feeMinor,
+    soldAt: listing.soldAt,
+    soldMinor: listing.soldMinor,
+    createdAt: listing.createdAt,
+    item: isPopulatedItem(item)
+      ? {
+          name: item.name,
+          slug: item.slug,
+          logoUrl: item.logoUrl,
+          tagline: (item as { tagline?: string }).tagline,
+          category: (item as { category?: string }).category,
+          wallColour: (item as { wallColour?: string }).wallColour,
+          voteCount: (item as { voteCount?: number }).voteCount ?? 0,
+        }
+      : null,
+    seller: isPopulatedUser(seller) ? toPublicUser(seller) : null,
+  };
+}
+
+/** A listing being read. The summary plus everything the seller wrote. */
+export function toAcquisitionResponse(listing: IAcquisition) {
+  return {
+    ...toAcquisitionSummary(listing),
+    reason: listing.reason,
+    notes: listing.notes,
+    reviewNote: listing.reviewNote,
+    appliedAt: listing.appliedAt,
+    reviewedAt: listing.reviewedAt,
+    soldFeeMinor: listing.soldFeeMinor,
+  };
+}
+
+export function toBidResponse(bid: IBid) {
+  const bidder = bid.bidder as unknown;
+
+  return {
+    id: bid._id.toString(),
+    amountMinor: bid.amountMinor,
+    currency: bid.currency,
+    message: bid.message,
+    status: bid.status,
+    createdAt: bid.createdAt,
+    bidder: isPopulatedUser(bidder) ? toPublicUser(bidder) : null,
+  };
+}
+
+/* --------------------------------------------------- custom print jobs --- */
+
+/**
+ * One custom design.
+ *
+ * The analysis travels with it rather than being recomputed client-side. The
+ * page needs the warnings and the suggested garments to render, and re-deriving
+ * them in the browser would mean a second implementation of the measurement
+ * that could disagree with the one the price was based on.
+ */
+export function toCustomDesignResponse(design: ICustomDesign) {
+  const owner = design.owner as unknown;
+
+  return {
+    id: design._id.toString(),
+    reference: design.reference,
+    name: design.name,
+    artworkUrl: design.artworkUrl,
+    analysis: design.analysis,
+    product: design.product,
+    garment: design.garment,
+    placement: design.placement,
+    scale: design.scale,
+    size: design.size,
+    lifestyleUrl: design.lifestyleUrl,
+    priceMinor: design.priceMinor,
+    currency: design.currency,
+    status: design.status,
+    reviewNote: design.reviewNote,
+    reviewedAt: design.reviewedAt,
+    createdAt: design.createdAt,
+    /* Populated only on the staff queue; null on a person's own list, where
+       they already know who they are. */
+    owner: isPopulatedUser(owner) ? toPublicUser(owner) : null,
   };
 }
