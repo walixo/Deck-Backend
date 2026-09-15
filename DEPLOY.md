@@ -71,10 +71,14 @@ in Render's store. No secret is in the file.
 
 Two things in it are worth understanding rather than copying:
 
-- **`buildCommand: npm ci && npm run build`** — the first deploy failed with
-  `Cannot find module dist/server.js` because the dashboard default was `npm
-  install`, which never compiles TypeScript. There is no `dist/` unless
-  something builds it.
+- **`buildCommand: npm ci --include=dev && npm run build`** — both halves of
+  that line are a deploy that failed. The dashboard default `npm install` never
+  compiles TypeScript, so there was no `dist/`. And `--include=dev` is needed
+  because Render applies the service's environment to the *build* too: with
+  `NODE_ENV=production` set, npm skips devDependencies, TypeScript is not
+  installed, and `tsc` falls through to whatever is global on the build image —
+  a major version ahead, which rejects this project's `moduleResolution` with an
+  error that names `tsconfig.json` and looks nothing like a missing dependency.
 - **`TRUST_PROXY: 1`** — Render terminates TLS in front of the process, so
   `X-Forwarded-For` is the proxy's word and can be trusted. Without it every
   audit entry records the load balancer's address and the login rate limiter
@@ -98,12 +102,13 @@ rather than take the host's default: nothing here uses an API newer than 20, but
 a host that quietly defaults to 18 is a failure you debug at deploy time instead
 of reading in a file.
 
-> **Do not set `NODE_ENV=production` before the install.** npm then skips
-> devDependencies, TypeScript is not there, and `npm run build` fails on a host
-> where it worked locally. Install and build with everything, set `NODE_ENV` for
-> the *run*. A prod-only install has been verified to boot, serve real data and
-> shut down cleanly — nothing dev-only leaks into runtime — but it can only do
-> that against a `dist/` that was already built.
+> **`NODE_ENV=production` must not reach the install.** npm reads it as "skip
+> devDependencies", TypeScript is one, and the build then fails on a host where
+> it worked locally. On Render you cannot simply unset it — a service's
+> environment applies to its build as well — so the install says
+> `--include=dev` explicitly. A prod-only install has been verified to boot,
+> serve real data and shut down cleanly, so nothing dev-only leaks into
+> *runtime*; it just cannot produce the `dist/` it runs.
 
 The process handles SIGTERM: it stops accepting connections, closes the MongoDB
 connection, and exits 0, with an 8-second backstop that exits anyway if

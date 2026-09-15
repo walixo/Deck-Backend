@@ -15,16 +15,25 @@ services:
     runtime: node
     plan: starter
 
-    # `npm install` alone is what the first deploy ran, and it is the whole
-    # reason it failed: nothing compiled TypeScript, so `dist/server.js` never
-    # existed and the start command had nothing to run.
+    # Two failures are encoded in this one line, both of them real.
     #
-    # `npm ci` rather than `npm install` — it installs exactly the lockfile,
-    # which is the point of having one, and it is faster. devDependencies are
-    # installed on purpose: TypeScript is one of them and the build needs it.
-    # NODE_ENV is set below for the *run*, not for the install, because setting
-    # it earlier makes npm skip devDependencies and the build fails.
-    buildCommand: npm ci && npm run build
+    # `npm install` alone was the dashboard default, and nothing in it compiles
+    # TypeScript — so `dist/server.js` never existed and the start command had
+    # nothing to run.
+    #
+    # `--include=dev` is the second. `NODE_ENV: production` is set below for the
+    # *run*, but Render applies a service's environment to the *build* as well,
+    # and npm reads `NODE_ENV=production` as "skip devDependencies". TypeScript
+    # is a devDependency, so it was never installed — and `tsc` then resolved to
+    # whatever TypeScript happens to be global on the build image, which is a
+    # major version ahead and rejects this project's `moduleResolution`. The
+    # error it produced named tsconfig.json and looked nothing like a missing
+    # dependency.
+    #
+    # `--include=dev` says what is meant regardless of NODE_ENV. `npm ci` rather
+    # than `npm install` because it installs exactly the lockfile, which is the
+    # point of keeping one.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
 
     healthCheckPath: /api/health
