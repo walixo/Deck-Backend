@@ -17,21 +17,70 @@ Frontend on Vercel, API and database elsewhere.
                   └─────────────────────────┘
 ```
 
-## Why Vercel rewrites rather than a cross-origin API URL
+## How the frontend reaches the API
 
-The obvious split is to point the frontend at `https://api.example.com` with a
-`VITE_API_URL`. Don't. Uploaded images are stored in the database as **relative
-paths** — `logoUrl: "/uploads/6f2a….png"` — so on a Vercel-served page those
-resolve against the Vercel domain and 404. Fixing that properly would mean
-rewriting every stored URL at serialisation time, in every serialiser.
+Set **`VITE_API_BASE_URL`** in the Vercel project to the API's origin, with no
+`/api` on the end:
 
-Proxying instead keeps the browser on one origin. Nothing in the application
-changes, `/uploads` keeps working, and **there is no CORS in production at
-all** — no preflights, no origin list to maintain, no class of bug that only
-appears in production.
+```
+VITE_API_BASE_URL=https://deck-backend-9js1.onrender.com
+```
 
-The cost is that API traffic takes an extra hop through Vercel's edge. At this
-size that is not the bottleneck.
+Vite inlines it at **build** time, so it has to be set where the build runs and
+changing it means redeploying. Requests then go straight to Render.
+
+Leave it unset and the app calls a relative `/api` instead, which `vercel.json`
+rewrites to the same host. Both work; the difference is who does the hop.
+
+| | `VITE_API_BASE_URL` set | unset |
+| --- | --- | --- |
+| Request path | Browser → Render | Browser → Vercel edge → Render |
+| CORS | Required | None |
+| Latency | One hop | Two |
+
+Either way `vercel.json` keeps a `/uploads/*` rewrite pointing at the API. New
+images are absolute Cloudinary URLs and never use it, but a record written
+before Cloudinary — or a development database — stores `"/uploads/6f2a….png"`,
+and that path has to resolve to something.
+
+### Pointing local development at the deployed API
+
+Set `VITE_API_BASE_URL` in the frontend's `.env` and `npm run dev` calls Render
+directly, so DevTools shows the real backend URLs instead of `localhost` — which
+is the whole reason to do it. The Vite proxy is bypassed.
+
+For that to work, `CLIENT_ORIGIN` on Render has to include the dev origin:
+
+```
+CLIENT_ORIGIN=https://your-app.vercel.app,http://localhost:3000
+```
+
+**The Vercel domain must stay first.** `clientOrigins[0]` is what the share kit
+uses to build `pageUrl` — the link makers copy — so putting localhost in front
+of it hands every maker a link to a machine that is not on the internet.
+
+Two things to expect. Every request carries an `Authorization` header, so each
+one is preflighted: an `OPTIONS` round trip to Render before the real call, and
+on a cold instance that is slow. And allowing a localhost origin in production
+means anyone running a dev server on that port can call the API from a browser —
+harmless while the API still demands a bearer token, but worth removing once you
+stop needing it.
+
+To go back to a local API, comment `VITE_API_BASE_URL` out. The app falls back
+to a relative `/api` and Vite proxies it to `:4200`.
+
+### CORS is load-bearing in the first mode
+
+Going direct means the browser sends an `Origin` header the API has to accept,
+so **`CLIENT_ORIGIN` on Render must name the Vercel domain** or every request
+is blocked. The `Authorization` header also makes each call a preflighted one,
+so the API answers an `OPTIONS` first — `cors()` handles that, verified
+returning 204 with the right headers.
+
+A rejected origin answers without the allow header rather than erroring. That
+matters for debugging: it used to throw, which the error handler turned into a
+500, so a typo in `CLIENT_ORIGIN` looked like the server had fallen over
+instead of like a configuration mistake.
 
 ## 1. Vercel
 
@@ -57,8 +106,9 @@ consent to):
 
 | Variable | Notes |
 | --- | --- |
-| `VITE_ADSENSE_CLIENT` | `ca-pub-…` |
-| `VITE_ADSENSE_SLOT` | Both must be set for any unit to appear |
+| `VITE_API_BASE_URL` | The API origin, no `/api` suffix. See above |
+| `VITE_ADSENSE_CLIENT` | Optional. `ca-pub-…` |
+| `VITE_ADSENSE_SLOT` | Optional. Both must be set for any unit to appear |
 
 ## 2. API host — Render
 
@@ -253,7 +303,8 @@ what `unfurl.ts` already does. Roughly an hour's work. Not done yet.
 - [ ] `JWT_SECRET` generated fresh, 32+ characters, not in any file that ships
 - [ ] `NODE_ENV=production`
 - [ ] `MONGODB_URI` points at Atlas, not localhost
-- [ ] `CLIENT_ORIGIN` is the real domain
+- [ ] `CLIENT_ORIGIN` is the real Vercel domain — without it every call is blocked
+- [ ] `VITE_API_BASE_URL` set in Vercel **before** the build, not after
 - [ ] All three `CLOUDINARY_*` variables set (no Persistent Disk needed)
 - [ ] `npm run check:cloudinary:prod` passes **on Render**, not just locally
 - [ ] `TRUST_PROXY` set if and only if there is a proxy

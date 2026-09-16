@@ -55,12 +55,22 @@ export function createApp(): Application {
    */
   if (env.trustProxy) app.set('trust proxy', env.trustProxy);
 
+  /*
+   * CORS is load-bearing now that the frontend calls this API cross-origin.
+   *
+   * A rejected origin answers *without* the allow header rather than throwing.
+   * Throwing sent the request to the error handler, which returned a 500 — so a
+   * `CLIENT_ORIGIN` with a typo in it looked like the server had fallen over,
+   * when the truthful report is the browser's own console saying the origin is
+   * not allowed. Omitting the header produces exactly that, and leaves a
+   * misconfiguration looking like a misconfiguration.
+   */
   app.use(
     cors({
       origin(origin, callback) {
         // Allow tools without an Origin header (curl, server-to-server).
         if (!origin || env.clientOrigins.includes(origin)) return callback(null, true);
-        return callback(new Error(`Origin ${origin} is not allowed by CORS`));
+        return callback(null, false);
       },
       credentials: true,
     }),
