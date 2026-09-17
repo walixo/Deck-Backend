@@ -4,6 +4,8 @@ import { Comment } from '../models/Comment';
 import { Category } from '../models/Category';
 import { Item } from '../models/Item';
 import { ItemRevision } from '../models/ItemRevision';
+import { ItemView } from '../models/ItemView';
+import { ItemViewDaily } from '../models/ItemViewDaily';
 import { AdCampaign } from '../models/AdCampaign';
 import { AuditEvent } from '../models/AuditEvent';
 import { Contribution } from '../models/Contribution';
@@ -13,11 +15,16 @@ import { Order } from '../models/Order';
 import { User } from '../models/User';
 import { Vote } from '../models/Vote';
 import { SEED_CATEGORIES } from '../constants';
-import { addDays, toDateKey } from '../utils/date';
+import { addDays, startOfUtcDay, toDateKey } from '../utils/date';
 import { snapshotOf } from '../services/revisions';
 import { slugify } from '../utils/slug';
 import { seedComments, seedItems, seedUsers } from './data';
 import { seedMerch } from './merch.data';
+
+/** How many days of view history the seed lays down. Matches the dashboard's
+    default window, so a fresh database draws a full chart rather than a stub. */
+const DAILY_WINDOW = 30;
+const startOfToday = startOfUtcDay(new Date());
 
 /** Deterministic pseudo-random generator so reseeding produces the same demo state. */
 function makeRandom(seed: number): () => number {
@@ -38,6 +45,8 @@ async function seed(): Promise<void> {
     Item.deleteMany({}),
     Category.deleteMany({}),
     ItemRevision.deleteMany({}),
+    ItemView.deleteMany({}),
+    ItemViewDaily.deleteMany({}),
     User.deleteMany({}),
     MerchProduct.deleteMany({}),
     Order.deleteMany({}),
@@ -163,6 +172,7 @@ async function seed(): Promise<void> {
   await Comment.insertMany(comments);
 
   console.log('[seed] updating denormalised counters');
+  const dailyViews: { item: (typeof items)[number]['_id']; dateKey: string; views: number }[] = [];
   await Promise.all(
     items.map(async (item) => {
       const totals = ratingTotals.get(item.id) ?? { count: 0, sum: 0 };
@@ -170,9 +180,56 @@ async function seed(): Promise<void> {
       item.reviewCount = totals.count;
       item.ratingSum = totals.sum;
       item.ratingAvg = totals.count > 0 ? totals.sum / totals.count : 0;
+      /*
+       * Plausible view counts, derived rather than random.
+       *
+       * Real views come from people opening the page, which a seed cannot
+       * produce — but leaving every launch on zero makes the demo look broken
+       * in the one place the number is meant to signal interest. Deriving it
+       * from votes and comments keeps the seed deterministic, like everything
+       * else in this file, and keeps the ordering believable: the launches
+       * people voted for are the launches people looked at. The ratio is the
+       * rough shape of a real board — most readers never vote.
+       */
+      item.viewCount =
+        item.voteCount * 17 + item.commentCount * 11 + (item.slug.length % 7) * 23 + 9;
       await item.save();
+
+      /*
+       * The same total, spread across the last thirty days.
+       *
+       * A lifetime figure with no daily rows behind it draws a maker dashboard
+       * that is all zeroes next to a large number, which looks like a bug
+       * rather than like a seed. Only a share of the total lands in the window
+       * — the rest is "before the chart starts", which is what a real launch
+       * older than a month looks like.
+       *
+       * Weighted towards the recent end and jittered off the slug, so the
+       * lines have a shape and no two launches have the same one, while the
+       * whole thing stays as deterministic as the rest of this file.
+       */
+      const weights = Array.from({ length: DAILY_WINDOW }, (_, index) => {
+        const jitter = ((item.slug.charCodeAt(index % item.slug.length) + index * 7) % 11) + 2;
+        return jitter * (1 + index / DAILY_WINDOW);
+      });
+      const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+      const inWindow = Math.round(item.viewCount * 0.4);
+
+      for (const [index, weight] of weights.entries()) {
+        const views = Math.round((weight / weightTotal) * inWindow);
+        if (views > 0) {
+          dailyViews.push({
+            item: item._id,
+            dateKey: toDateKey(addDays(startOfToday, index - (DAILY_WINDOW - 1))),
+            views,
+          });
+        }
+      }
     }),
   );
+
+  await ItemViewDaily.insertMany(dailyViews);
+  console.log(`[seed] wrote ${dailyViews.length} daily view buckets`);
 
   console.log(`[seed] stocking ${seedMerch.length} merch products`);
   const merch = await MerchProduct.create(

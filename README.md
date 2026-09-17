@@ -58,6 +58,13 @@ knowing without reading it:
   Without a proxy, trusting `X-Forwarded-For` lets any client claim any IP.
 - **Paystack** is optional. Without a secret key the shop runs but cannot take
   card payments.
+- **Two collections appear on their own**, both behind the view counts in
+  `services/views.ts`. `itemviews` is the dedupe ledger — it grows to roughly
+  "distinct viewers in the last twelve hours" and MongoDB's TTL monitor empties
+  it without being asked; dropping it costs nothing worse than a day of viewers
+  being counted twice. `itemviewdaily` is one row per launch per UTC day and is
+  the record rather than scaffolding: it is what the maker dashboard charts,
+  it has no TTL, and it cannot be rebuilt from anything else once lost.
 
 ## One generated file comes from the other repo
 

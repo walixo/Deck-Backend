@@ -96,6 +96,9 @@ export function toItemResponse(item: IItem, votedItemIds?: Set<string>) {
     launchDateKey: item.launchDateKey,
     featured: item.featured,
     futureGen: item.futureGen,
+    /* `?? 0` because launches that predate the counter have no field at all,
+       and a card would rather render "0" than "NaN views". */
+    viewCount: item.viewCount ?? 0,
     voteCount: item.voteCount,
     commentCount: item.commentCount,
     reviewCount: item.reviewCount,

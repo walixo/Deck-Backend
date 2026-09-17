@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import type { FilterQuery } from 'mongoose';
+import { env } from '../config/env';
 import { CURRENCY, PLATFORM_FEE_PERCENT } from '../constants';
 import { AdCampaign } from '../models/AdCampaign';
 import { AuditEvent } from '../models/AuditEvent';
@@ -361,4 +362,62 @@ export async function setUserVerified(req: Request, res: Response): Promise<void
   });
 
   res.json({ success: true, data: { ...toPublicUser(user), role: user.role } });
+}
+
+/**
+ * What address this server thinks its callers have, and whether TRUST_PROXY
+ * agrees with reality.
+ *
+ * This exists because the answer is unknowable from outside. `req.ip` is
+ * derived from `X-Forwarded-For` and the configured hop count, and getting the
+ * count wrong does not raise anything — it quietly hands back the address of
+ * the nearest proxy instead of the visitor's, and everything downstream keeps
+ * working while being wrong:
+ *
+ *   - the login rate limiter buckets the entire internet into one counter, so
+ *     ten failed logins anywhere lock out everyone;
+ *   - the view dedupe collapses distinct visitors onto a handful of keys and
+ *     undercounts;
+ *   - every audit entry records the proxy rather than the actor.
+ *
+ * The hop count depends on the *route the request took*, not on the host, so
+ * it changes the day traffic starts going through a CDN and nobody notices.
+ * Hence a live check rather than a note in a README.
+ *
+ * Staff-only: the chain describes the infrastructure, and the addresses in it
+ * are real.
+ */
+export function getProxyDiagnostics(req: Request, res: Response): void {
+  const chain = (req.get('x-forwarded-for') ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  /*
+   * Each proxy in front appends the address it received the request from, so
+   * a fully-proxied chain has exactly one entry per hop — and the number of
+   * hops is what `trust proxy` wants. No header at all means nothing is in
+   * front, and trusting one hop would then let any caller name its own IP.
+   */
+  const recommended = chain.length > 0 ? chain.length : false;
+
+  res.json({
+    success: true,
+    data: {
+      configured: env.trustProxy,
+      recommended,
+      agrees: env.trustProxy === recommended,
+      /* What the rest of the app will act on. Compare it against the address
+         you are actually calling from — if they differ, the count is wrong. */
+      resolvedIp: req.ip,
+      /* The other end of the last socket: the proxy nearest this process. */
+      socketIp: req.socket.remoteAddress ?? null,
+      forwardedFor: chain,
+      forwardedHops: chain.length,
+      /* Which front door the request came through — a Vercel rewrite and a
+         direct call to the API host are different chains, and this says which
+         one you just used. */
+      host: req.get('host') ?? null,
+    },
+  });
 }

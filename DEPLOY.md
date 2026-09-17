@@ -283,6 +283,53 @@ It must point at the API host directly, **not** at the Vercel domain. The
 handler verifies Paystack's signature against the raw request body, and a proxy
 hop is a chance for those bytes to change.
 
+## 5. Social sign-in (optional)
+
+Both providers are independent and both are optional: whatever has keys is
+offered on the sign-in page, and what does not is simply absent. With neither
+set, Deck works exactly as it did — email and password.
+
+First set the API's own public address, because the callback URL is built from
+it and cannot be inferred behind a proxy:
+
+```
+PUBLIC_API_URL=https://YOUR-API-HOST
+```
+
+**GitHub** — Settings → Developer settings → OAuth Apps → New OAuth App:
+
+```
+Authorization callback URL: https://YOUR-API-HOST/api/auth/oauth/github/callback
+```
+
+**Google** — console.cloud.google.com → APIs & Services → Credentials → Create
+OAuth client ID → Web application:
+
+```
+Authorised redirect URI:    https://YOUR-API-HOST/api/auth/oauth/google/callback
+```
+
+Then set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` and `GOOGLE_CLIENT_ID` /
+`GOOGLE_CLIENT_SECRET` on the API host. Each pair is all-or-nothing; a lone id
+makes the server refuse to start rather than fail later at a redirect.
+
+Three things that will bite:
+
+- **The callback URL must point at the API host, not at the Vercel domain.**
+  The exchange sends the client secret, so it happens server to server, and the
+  provider compares the redirect URI character for character against what is
+  registered. A trailing slash is a different URL.
+- **`CLIENT_ORIGIN`'s first entry is where the browser is sent afterwards.**
+  The same ordering rule the share kit depends on — if localhost is first, a
+  production sign-in ends on a machine that is not on the internet.
+- **A provider account with no verified email is refused**, with a message
+  saying so. Linking on an unverified address is how somebody signs up at a
+  provider using your email and inherits your launches.
+
+An account created this way has no password. It can sign in with that provider
+for as long as the provider exists; signing in with a password needs one set
+first, which today means an admin or a password reset flow.
+
 ## Known trade-off: link previews
 
 `src/middleware/unfurl.ts` rewrites Open Graph tags per launch, so a

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getOverview,
+  getProxyDiagnostics,
   listAllOrders,
   listAuditEvents,
   listUsers,
@@ -137,5 +138,10 @@ router.delete('/posts/:id', asyncHandler(deletePost));
 /* Read-only, deliberately. There is no route to amend the trail, and the model
    refuses it even if one were added by mistake. */
 router.get('/audit', validate(listAuditSchema, 'query'), asyncHandler(listAuditEvents));
+
+/* Infrastructure, not content: answers "is TRUST_PROXY set to the right number
+   on this host, through this route". See the controller for why that cannot be
+   worked out from a config file. */
+router.get('/diagnostics/proxy', getProxyDiagnostics);
 
 export default router;

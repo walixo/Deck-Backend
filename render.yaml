@@ -64,6 +64,21 @@ services:
       - key: CLIENT_ORIGIN
         sync: false
 
+      # Social sign-in. Optional — leave any of these blank in the dashboard and
+      # that provider simply is not offered. PUBLIC_API_URL is this service's
+      # own https address and must match the callback URL registered with each
+      # provider exactly.
+      - key: PUBLIC_API_URL
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

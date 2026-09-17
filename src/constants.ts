@@ -323,3 +323,7 @@ export const AUDIT_TARGETS = [
   'game',
 ] as const;
 export type AuditTarget = (typeof AUDIT_TARGETS)[number];
+
+/** Social sign-in providers Deck knows how to talk to. */
+export const OAUTH_PROVIDERS = ['github', 'google'] as const;
+export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];

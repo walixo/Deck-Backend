@@ -60,6 +60,8 @@ export interface IItem extends Document {
   featured: boolean;
   /** On Future Gen: the showcase for young African hardware makers. Staff-set. */
   futureGen: boolean;
+  /** Distinct viewers, deduped per 12h window. See services/views.ts. */
+  viewCount: number;
   voteCount: number;
   commentCount: number;
   reviewCount: number;
@@ -189,6 +191,20 @@ const itemSchema = new Schema<IItem>(
      * that ends with strangers sending money.
      */
     futureGen: { type: Boolean, default: false, index: true },
+    /*
+     * How many people opened this launch.
+     *
+     * Denormalised like every other counter here, and for the same reason: a
+     * card renders it, cards render thirty at a time, and counting rows to
+     * draw a list is how a list stops loading. The truth is a `$inc` from
+     * `services/views.ts`, which decides what counts as a view; the ItemView
+     * collection holds the dedupe ledger and throws itself away.
+     *
+     * No index. Nothing sorts by it — deliberately. Views are the cheapest
+     * number on the site to manufacture, so they inform a reader and they do
+     * not rank anybody.
+     */
+    viewCount: { type: Number, default: 0, min: 0 },
     voteCount: { type: Number, default: 0, min: 0, index: true },
     commentCount: { type: Number, default: 0, min: 0 },
     reviewCount: { type: Number, default: 0, min: 0 },

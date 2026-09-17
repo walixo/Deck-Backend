@@ -10,6 +10,7 @@ import { assertCategory } from './category.controller';
 import { audit } from '../services/audit';
 import { evaluateBadges } from '../services/badges';
 import { recordRevision, snapshotOf } from '../services/revisions';
+import { recordView } from '../services/views';
 import { ApiError } from '../utils/ApiError';
 import { toDateKey } from '../utils/date';
 import { uniqueSlug } from '../utils/slug';
@@ -172,7 +173,17 @@ export async function getItem(req: Request, res: Response): Promise<void> {
   const item = await Item.findOne({ slug }).populate('submittedBy', SUBMITTER_FIELDS);
   if (!item) throw ApiError.notFound('We could not find that launch');
 
-  const [voted, related, siblings] = await Promise.all([
+  /*
+   * The view is counted here, in the request that fetched the launch — not by
+   * a beacon the client fires.
+   *
+   * A client-side ping is a second endpoint, a second thing to rate limit, and
+   * a number anybody can raise with a loop in a console. Counting the fetch
+   * that renders the page means the count is a byproduct of the page existing.
+   * `recordView` decides what qualifies (see services/views.ts) and never
+   * throws, so it can sit in this Promise.all and cost no extra latency.
+   */
+  const [voted, related, siblings, counted] = await Promise.all([
     votedIdsFor(req.user?._id.toString(), [item]),
     Item.find({ _id: { $ne: item._id }, category: item.category })
       .sort({ voteCount: -1 })
@@ -184,12 +195,17 @@ export async function getItem(req: Request, res: Response): Promise<void> {
     Item.find({ lineage: item.lineage ?? item._id })
       .sort({ launchDate: -1 })
       .select('slug name version launchDate voteCount ratingAvg ratingSum reviewCount'),
+    recordView(item, req),
   ]);
 
   res.json({
     success: true,
     data: {
       ...toItemResponse(item, voted),
+      /* The document was read before the increment landed, so the viewer's own
+         visit is added back on. Without it every reader is shown a number that
+         is one behind the page they are looking at. */
+      viewCount: (item.viewCount ?? 0) + (counted ? 1 : 0),
       related: related.map((relatedItem) => toItemResponse(relatedItem)),
       /* Omitted entirely when a product has only ever launched once — a
          "versions" list of one is not a version history, and the client should

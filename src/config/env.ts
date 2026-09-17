@@ -101,6 +101,37 @@ function readCloudinary(): CloudinaryConfig | null {
   };
 }
 
+export interface OAuthProviderConfig {
+  clientId: string;
+  clientSecret: string;
+}
+
+/**
+ * One social provider's credentials, or nothing.
+ *
+ * Same all-or-nothing rule as Cloudinary and for the same reason: an id
+ * without a secret is a typo, and the failure it produces arrives much later,
+ * as a redirect to a provider that bounces the user straight back. Absent
+ * entirely is legitimate — sign-in with a password works on its own, and a
+ * local checkout should not need a GitHub app registered to run.
+ */
+function readOAuthProvider(name: string): OAuthProviderConfig | null {
+  const clientId = process.env[`${name}_CLIENT_ID`];
+  const clientSecret = process.env[`${name}_CLIENT_SECRET`];
+
+  const given = [clientId, clientSecret].filter(Boolean).length;
+  if (given === 0) return null;
+
+  if (given < 2) {
+    throw new Error(
+      `${name} sign-in is half-configured. Set ${name}_CLIENT_ID and ` +
+        `${name}_CLIENT_SECRET together, or neither.`,
+    );
+  }
+
+  return { clientId: clientId as string, clientSecret: clientSecret as string };
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: Number(process.env.PORT ?? 4000),
@@ -182,6 +213,26 @@ export const env = {
    * missing one.
    */
   cloudinary: readCloudinary(),
+
+  /*
+   * Social sign-in. Each provider is independent — GitHub can be live while
+   * Google is not, and the sign-in page only offers what is configured.
+   */
+  oauth: {
+    github: readOAuthProvider('GITHUB'),
+    google: readOAuthProvider('GOOGLE'),
+  },
+
+  /*
+   * Where the browser comes back to after a provider redirect.
+   *
+   * `PUBLIC_API_URL` is this server's own address as the outside world sees
+   * it, which is not something Express can work out for itself — behind a
+   * proxy the host header is whatever the proxy decided to send. It has to
+   * match the callback URL registered with each provider exactly, character
+   * for character, or the provider refuses the exchange.
+   */
+  publicApiUrl: (process.env.PUBLIC_API_URL ?? '').replace(/\/+$/, ''),
 
   clientOrigins: (process.env.CLIENT_ORIGIN ?? 'http://localhost:5173')
     .split(',')
