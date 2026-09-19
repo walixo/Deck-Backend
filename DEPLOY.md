@@ -270,6 +270,29 @@ variant runs the compiled `dist/scripts/create-admin.js` instead. Reaching for
 the wrong one on the server gives you `tsx: not found` at the moment you are
 trying to make yourself an admin.
 
+### No shell on the host?
+
+A shell on the server is convenient, not necessary. What the script actually
+needs is a connection to the production database, and that can come from
+anywhere the database will accept a connection from — including your laptop:
+
+```bash
+MONGODB_URI="<the production connection string>" \
+  npm run create-admin -- --email you@example.com --name "Your Name" --username you
+```
+
+The inline variable wins: `dotenv.config()` does not overwrite values that are
+already in the environment, so this reaches production without touching your
+local `.env` or leaving the string in a file. Atlas has to allow the address
+you are calling from — if its access list is still `0.0.0.0/0` for the API
+host, it already does.
+
+Last resort, no tooling at all: register through the site like any other
+visitor, then open the `users` collection in Atlas and change that document's
+`role` from `user` to `admin`. It is the same single field the script sets. It
+writes no audit entry, which the script does, so prefer the command when you
+have the choice.
+
 ## 4. Paystack
 
 Switch the dashboard to live mode, take the live secret key, and set the
