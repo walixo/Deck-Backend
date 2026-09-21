@@ -11,6 +11,7 @@ import {
 import { Contribution } from '../models/Contribution';
 import { Item, type IItem } from '../models/Item';
 import { audit } from '../services/audit';
+import { notify } from '../services/notify';
 import { applyPlatformFee } from '../services/money';
 import { initializeTransaction, paystackConfigured } from '../services/paystack';
 import { toContributionResponse, toFundraiseResponse, toPublicUser } from '../serializers';
@@ -286,6 +287,20 @@ export async function reviewFundraise(req: Request, res: Response): Promise<void
       ? `Approved the fundraise on "${item.name}"`
       : `Turned down the fundraise on "${item.name}" — ${note}`,
     after: { status: item.fundraise.status, targetMinor: item.fundraise.targetMinor, note },
+  });
+
+  /* Both outcomes. A rejection the applicant is never told about is just an
+     application that vanished, and the note is the whole point of writing one. */
+  void notify({
+    user: item.submittedBy,
+    kind: 'fundraise.reviewed',
+    title: approve
+      ? `Your fundraise on ${item.name} was approved`
+      : `Your fundraise on ${item.name} was not approved`,
+    body: approve
+      ? 'It can start taking contributions now.'
+      : note?.trim() || 'Staff reviewed the application and could not approve it this time.',
+    link: `/item/${item.slug}`,
   });
 
   res.json({ success: true, data: toFundraiseResponse(item) });

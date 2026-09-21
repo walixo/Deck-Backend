@@ -1,9 +1,11 @@
 import type { Request, Response } from 'express';
-import { Comment } from '../models/Comment';
+import { Comment, type IComment } from '../models/Comment';
 import { Item, type IItem } from '../models/Item';
+import type { IUser } from '../models/User';
 import { toCommentResponse } from '../serializers';
 import { audit } from '../services/audit';
 import { evaluateBadges } from '../services/badges';
+import { excerpt, notify } from '../services/notify';
 import { ApiError } from '../utils/ApiError';
 import type { CreateCommentInput } from '../validators/comment.validators';
 
@@ -30,6 +32,57 @@ async function syncItemCounters(item: IItem): Promise<void> {
   item.ratingAvg = summary.count > 0 ? summary.sum / summary.count : 0;
 
   await item.save();
+}
+
+/**
+ * Tells whoever has a stake in a new comment that it exists.
+ *
+ * Up to two people, and never the same person twice: the launch's owner hears
+ * that their launch was commented on or reviewed, and the author of the parent
+ * comment hears that they got a reply. When the owner *is* the parent author
+ * — somebody replying to a maker on the maker's own launch — only the reply is
+ * sent, because being told twice about one comment reads as a bug.
+ *
+ * Not awaited by the caller. See `services/notify`.
+ */
+async function announceComment(
+  author: IUser,
+  item: IItem,
+  comment: IComment,
+  parent?: string | null,
+): Promise<void> {
+  const link = `/item/${item.slug}#discussion`;
+  const told = new Set<string>();
+
+  if (parent) {
+    const parentComment = await Comment.findById(parent).select('user');
+    if (parentComment) {
+      told.add(parentComment.user.toString());
+      await notify({
+        user: parentComment.user,
+        actor: author._id,
+        kind: 'comment.replied',
+        title: `${author.name} replied to your comment on ${item.name}`,
+        body: excerpt(comment.body),
+        link,
+      });
+    }
+  }
+
+  if (told.has(item.submittedBy.toString())) return;
+
+  /* A comment carrying a rating is a review, and reads differently to its
+     recipient — "rated it 4 stars" is the headline, not "said something". */
+  await notify({
+    user: item.submittedBy,
+    actor: author._id,
+    kind: comment.rating ? 'review.received' : 'comment.received',
+    title: comment.rating
+      ? `${author.name} reviewed ${item.name} — ${comment.rating}/5`
+      : `${author.name} commented on ${item.name}`,
+    body: excerpt(comment.body),
+    link,
+  });
 }
 
 export async function listComments(req: Request, res: Response): Promise<void> {
@@ -66,6 +119,7 @@ export async function createComment(req: Request, res: Response): Promise<void> 
   await Promise.all([comment.populate('user', AUTHOR_FIELDS), syncItemCounters(item)]);
 
   void evaluateBadges(req.user!._id);
+  void announceComment(req.user!, item, comment, parent);
 
   res.status(201).json({ success: true, data: toCommentResponse(comment) });
 }
@@ -96,6 +150,20 @@ export async function deleteComment(req: Request, res: Response): Promise<void> 
       targetLabel: item ? `Comment on ${item.name}` : 'Comment',
       summary: `Removed a comment: "${body.slice(0, 80)}${body.length > 80 ? '…' : ''}"`,
       before: { body },
+    });
+
+    /* Told, not just logged. The terms give people a right to appeal a
+       moderation decision, and an appeal right nobody knows they need to
+       exercise is not one — silently vanishing somebody's words is how a
+       community stops trusting its moderators. */
+    void notify({
+      user: comment.user,
+      kind: 'content.moderated',
+      title: 'A comment of yours was removed',
+      body: item
+        ? `Your comment on ${item.name} was removed by Deck staff.`
+        : 'One of your comments was removed by Deck staff.',
+      link: '/terms#enforcement',
     });
   }
 

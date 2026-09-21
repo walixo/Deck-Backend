@@ -10,6 +10,7 @@ import {
   type VerifiedTransaction,
 } from '../services/paystack';
 import { evaluateBadges } from '../services/badges';
+import { formatMinor, notify } from '../services/notify';
 import { toAdCampaignResponse, toContributionResponse, toOrderResponse } from '../serializers';
 import { ApiError } from '../utils/ApiError';
 
@@ -123,6 +124,21 @@ export async function applyVerifiedContribution(
         },
       },
     );
+
+    /* Only once the money has actually settled. Notifying on the attempt
+       would announce contributions that never arrived. */
+    const funded = await Item.findById(contribution.item).select('name slug');
+    if (funded) {
+      void notify({
+        user: contribution.beneficiary,
+        actor: contribution.contributor,
+        kind: 'fundraise.contribution',
+        title: `${formatMinor(contribution.amountMinor, contribution.currency)} towards ${funded.name}`,
+        body: 'A new contribution just landed on your fundraise.',
+        link: `/item/${funded.slug}`,
+      });
+    }
+
     return contribution;
   }
 

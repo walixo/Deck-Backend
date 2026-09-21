@@ -5,6 +5,7 @@ import { Acquisition, Bid, type IAcquisition } from '../models/Acquisition';
 import { Item } from '../models/Item';
 import { toAcquisitionResponse, toAcquisitionSummary, toBidResponse } from '../serializers';
 import { audit } from '../services/audit';
+import { notify } from '../services/notify';
 import { ApiError } from '../utils/ApiError';
 import type {
   CreateAcquisitionInput,
@@ -337,6 +338,18 @@ export async function reviewAcquisition(req: Request, res: Response): Promise<vo
       ? `Approved "${listing.slug}" for acquisition at ${listing.askingMinor / 100} — ${note}`
       : `Turned down the acquisition listing for "${listing.slug}" — ${note}`,
     after: { askingMinor: listing.askingMinor, feePercent: ACQUISITION_FEE_PERCENT, note },
+  });
+
+  void notify({
+    user: listing.seller,
+    kind: 'acquisition.reviewed',
+    title: approve
+      ? `Your acquisition listing is live`
+      : `Your acquisition listing was not approved`,
+    body: approve
+      ? 'Buyers can see it and make offers now.'
+      : note?.trim() || 'Staff reviewed the listing and could not approve it.',
+    link: `/acquisitions/${listing.slug}`,
   });
 
   res.json({ success: true, data: toAcquisitionResponse(listing) });

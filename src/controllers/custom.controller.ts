@@ -15,6 +15,7 @@ import { analyseArtwork, GARMENTS, type ArtworkAnalysis } from '../services/artw
 import { lifestyleConfigured, renderLifestyle } from '../services/lifestyle';
 import { toCustomDesignResponse } from '../serializers';
 import { audit } from '../services/audit';
+import { notify } from '../services/notify';
 import { ApiError } from '../utils/ApiError';
 import type {
   CreateCustomDesignInput,
@@ -261,6 +262,18 @@ export async function reviewCustomDesign(req: Request, res: Response): Promise<v
       ? `Approved custom print ${design.reference} ("${design.name}") for ${design.product} — ${note}`
       : `Turned down custom print ${design.reference} ("${design.name}") — ${note}`,
     after: { product: design.product, garment: design.garment, priceMinor: design.priceMinor, note },
+  });
+
+  void notify({
+    user: design.owner,
+    kind: 'custom.reviewed',
+    title: approve
+      ? `Your custom print ${design.reference} was approved`
+      : `Your custom print ${design.reference} was not approved`,
+    body: approve
+      ? 'It is going into production.'
+      : note?.trim() || 'Staff reviewed the design and could not approve it.',
+    link: '/settings/prints',
   });
 
   res.json({ success: true, data: toCustomDesignResponse(design) });

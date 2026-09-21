@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import type { FilterQuery } from 'mongoose';
 import { MerchProduct, type IMerchProduct } from '../models/MerchProduct';
 import { audit } from '../services/audit';
+import { notify } from '../services/notify';
 import { toMerchResponse } from '../serializers';
 import { ApiError } from '../utils/ApiError';
 import { uniqueSlug } from '../utils/slug';
@@ -262,6 +263,20 @@ export async function reviewMerchProduct(req: Request, res: Response): Promise<v
     before: { status: previous },
     after: { status: product.status, rejectionReason: product.rejectionReason },
   });
+
+  /* Only seller-submitted listings have somebody to tell — Deck's own
+     catalogue entries have a null seller. */
+  if (product.seller) {
+    void notify({
+      user: product.seller,
+      kind: 'merch.reviewed',
+      title: approving ? `${product.name} is on the shelf` : `${product.name} was not approved`,
+      body: approving
+        ? 'Your listing is live in the shop.'
+        : reason?.trim() || 'Staff reviewed the listing and could not approve it.',
+      link: '/sell',
+    });
+  }
 
   res.json({ success: true, data: toMerchResponse(product) });
 }

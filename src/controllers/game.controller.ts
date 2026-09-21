@@ -4,6 +4,7 @@ import { Game } from '../models/Game';
 import { Score } from '../models/Score';
 import { toGameResponse, toGameSummary, toScoreResponse } from '../serializers';
 import { audit } from '../services/audit';
+import { notify } from '../services/notify';
 import { ApiError } from '../utils/ApiError';
 import { uniqueSlug } from '../utils/slug';
 import type { SubmitScoreInput } from '../validators/score.validators';
@@ -179,6 +180,22 @@ export async function reviewGame(req: Request, res: Response): Promise<void> {
     before: { status: before },
     after: { status: game.status, embeddable: game.embeddable, featured: game.featured },
   });
+
+  if (game.author) {
+    void notify({
+      user: game.author,
+      kind: 'game.reviewed',
+      title:
+        input.status === 'approved'
+          ? `${game.title} is in the arcade`
+          : `${game.title} was not approved`,
+      body:
+        input.status === 'approved'
+          ? 'Anyone can play it now.'
+          : 'Staff reviewed the submission and could not approve it.',
+      link: '/games',
+    });
+  }
 
   res.json({ success: true, data: toGameResponse(game) });
 }

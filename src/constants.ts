@@ -327,3 +327,33 @@ export type AuditTarget = (typeof AUDIT_TARGETS)[number];
 /** Social sign-in providers Deck knows how to talk to. */
 export const OAUTH_PROVIDERS = ['github', 'google'] as const;
 export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
+
+/**
+ * What Deck will interrupt you for.
+ *
+ * The list is short on purpose. A notification is a claim on someone's
+ * attention, and the fastest way to make the bell worthless is to ring it for
+ * things people do not care about — which is why a single upvote is not on
+ * this list and a vote *milestone* is. Anything added here should be something
+ * the recipient would want to be told even if they were not on the site.
+ */
+export const NOTIFICATION_KINDS = [
+  /* Your work got a response. */
+  'comment.received',
+  'comment.replied',
+  'review.received',
+  'launch.milestone',
+  'launch.ranked',
+  /* Somebody made a decision about you or your work. */
+  'account.verified',
+  'fundraise.reviewed',
+  'acquisition.reviewed',
+  'merch.reviewed',
+  'game.reviewed',
+  'custom.reviewed',
+  'content.moderated',
+  /* Money and parcels. */
+  'fundraise.contribution',
+  'order.status',
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];

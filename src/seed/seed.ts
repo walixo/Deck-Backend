@@ -6,6 +6,7 @@ import { Item } from '../models/Item';
 import { ItemRevision } from '../models/ItemRevision';
 import { ItemView } from '../models/ItemView';
 import { ItemViewDaily } from '../models/ItemViewDaily';
+import { Notification } from '../models/Notification';
 import { AdCampaign } from '../models/AdCampaign';
 import { AuditEvent } from '../models/AuditEvent';
 import { Contribution } from '../models/Contribution';
@@ -47,6 +48,7 @@ async function seed(): Promise<void> {
     ItemRevision.deleteMany({}),
     ItemView.deleteMany({}),
     ItemViewDaily.deleteMany({}),
+    Notification.deleteMany({}),
     User.deleteMany({}),
     MerchProduct.deleteMany({}),
     Order.deleteMany({}),
@@ -230,6 +232,37 @@ async function seed(): Promise<void> {
 
   await ItemViewDaily.insertMany(dailyViews);
   console.log(`[seed] wrote ${dailyViews.length} daily view buckets`);
+
+  /*
+   * A few notifications for the first maker, so the bell has something in it.
+   *
+   * Seeded from events that really happened in this dataset — their own
+   * launches, their own comment counts — rather than from invented text, so
+   * clicking one lands somewhere real instead of on a 404.
+   */
+  const bellOwner = items[0].submittedBy;
+  const ninetyDays = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+  await Notification.insertMany(
+    items.slice(0, 4).map((item, index) => ({
+      user: bellOwner,
+      kind: index === 0 ? 'account.verified' : index === 1 ? 'launch.milestone' : 'comment.received',
+      title:
+        index === 0
+          ? 'Your account is verified'
+          : index === 1
+            ? `${item.name} passed 10 votes`
+            : `Someone commented on ${item.name}`,
+      body:
+        index === 0
+          ? 'The mark now appears beside your name wherever your account shows up on Deck.'
+          : 'Have a look at where the traffic is coming from.',
+      link: index === 0 ? '/settings' : `/item/${item.slug}`,
+      readAt: index > 1 ? new Date() : null,
+      createdAt: addDays(new Date(), -index),
+      expiresAt: ninetyDays,
+    })),
+  );
+  console.log('[seed] wrote 4 notifications for the first maker');
 
   console.log(`[seed] stocking ${seedMerch.length} merch products`);
   const merch = await MerchProduct.create(

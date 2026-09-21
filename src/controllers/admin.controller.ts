@@ -11,6 +11,7 @@ import { MerchProduct } from '../models/MerchProduct';
 import { Order } from '../models/Order';
 import { User, type IUser } from '../models/User';
 import { audit } from '../services/audit';
+import { notify } from '../services/notify';
 import { EARNING_ORDER_STATUSES, outstandingBalances } from '../services/ledger';
 import { toOrderResponse, toPublicUser } from '../serializers';
 import { ApiError } from '../utils/ApiError';
@@ -271,6 +272,19 @@ export async function updateOrderStatus(req: Request, res: Response): Promise<vo
     after: { status },
   });
 
+  /* The one notification a buyer is actually waiting for. Linked to the order
+     rather than to a list, because "where is my parcel" has one answer. */
+  void notify({
+    user: order.user,
+    kind: 'order.status',
+    title: status === 'shipped' ? `Order ${order.reference} is on its way` : `Order ${order.reference} was delivered`,
+    body:
+      status === 'shipped'
+        ? 'It has left us. Tracking details, if there are any, are on the order.'
+        : 'Marked delivered. If it has not reached you, reply to your order email.',
+    link: `/orders/${order.reference}`,
+  });
+
   res.json({ success: true, data: toOrderResponse(order) });
 }
 
@@ -360,6 +374,18 @@ export async function setUserVerified(req: Request, res: Response): Promise<void
     before: { verified: !verified },
     after: { verified, reason },
   });
+
+  /* Only the grant. Losing a mark is a conversation staff should be having
+     directly, not something to learn from a bell. */
+  if (verified) {
+    void notify({
+      user: user._id,
+      kind: 'account.verified',
+      title: 'Your account is verified',
+      body: 'The mark now appears beside your name wherever your account shows up on Deck.',
+      link: `/@${user.username}`,
+    });
+  }
 
   res.json({ success: true, data: { ...toPublicUser(user), role: user.role } });
 }
