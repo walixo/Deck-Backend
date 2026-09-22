@@ -149,3 +149,37 @@ export type RescheduleItemInput = z.infer<typeof rescheduleItemSchema>;
 export type SetFutureGenInput = z.infer<typeof setFutureGenSchema>;
 export type ReleaseItemInput = z.infer<typeof releaseItemSchema>;
 export type ListItemsQuery = z.infer<typeof listItemsSchema>;
+
+/**
+ * A maker updating what their product earns.
+ *
+ * Separate from `updateItemSchema` because it is a different kind of change,
+ * governed by a different rule: the pitch freezes when the edit window shuts,
+ * and a monthly figure that could never be updated after four hours would be
+ * wrong for the rest of the launch's life.
+ *
+ * `disclosed: false` clears the figure entirely — publishing a number has to
+ * be reversible, or nobody sensible publishes one.
+ */
+export const updateRevenueSchema = z
+  .object({
+    disclosed: z.boolean(),
+    /* Whole units in, minor units stored — the client sends 2500, not 250000.
+       Capped at a hundred million a month, which is not a real ceiling so much
+       as a typo catcher. */
+    monthly: z.coerce.number().min(0).max(100_000_000).optional(),
+    currency: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{3}$/, 'Use a three-letter currency code, like USD')
+      .optional(),
+    /* A claim the maker makes, not a sum Deck does. See the model. */
+    profitable: z.boolean().optional(),
+  })
+  .refine((value) => !value.disclosed || value.monthly !== undefined, {
+    message: 'Give a monthly figure, or zero if the product is pre-revenue',
+    path: ['monthly'],
+  });
+
+export type UpdateRevenueInput = z.infer<typeof updateRevenueSchema>;

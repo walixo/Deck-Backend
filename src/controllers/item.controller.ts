@@ -21,6 +21,7 @@ import type {
   RescheduleItemInput,
   SetFutureGenInput,
   UpdateItemInput,
+  UpdateRevenueInput,
 } from '../validators/item.validators';
 
 /* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
@@ -609,4 +610,73 @@ export async function deleteItem(req: Request, res: Response): Promise<void> {
   }
 
   res.json({ success: true, data: { id: item._id.toString() } });
+}
+
+/**
+ * Publishes, updates or withdraws the maker's revenue figure.
+ *
+ * Its own endpoint, deliberately outside the edit window that freezes
+ * everything else on a launch. That window exists so the pitch people voted on
+ * stays the pitch — but revenue is not a claim about what the product *is*, it
+ * is a measurement that goes out of date by standing still. Freezing it four
+ * hours after launch would guarantee every figure on the site was stale, which
+ * is worse than not showing one.
+ *
+ * No revision is recorded. `ItemRevision` is a history of the authored launch,
+ * and filling it with monthly metric updates would bury the edits it exists to
+ * expose. The audit trail keeps the record instead.
+ */
+export async function updateRevenue(req: Request, res: Response): Promise<void> {
+  const input = req.body as UpdateRevenueInput;
+
+  const item = await Item.findOne({ slug: req.params.slug });
+  if (!item) throw ApiError.notFound('We could not find that launch');
+
+  const user = req.user!;
+  const isOwner = item.submittedBy.toString() === user._id.toString();
+  if (!isOwner && user.role !== 'admin') {
+    throw ApiError.forbidden('Only the person who launched this can report its revenue');
+  }
+
+  const before = {
+    disclosed: item.revenue.disclosed,
+    monthlyMinor: item.revenue.monthlyMinor,
+  };
+
+  if (input.disclosed) {
+    item.revenue.disclosed = true;
+    /* Whole units in, minor units stored. Rounded rather than truncated, and
+       done once here — never carried through anything as a float. */
+    item.revenue.monthlyMinor = Math.round((input.monthly ?? 0) * 100);
+    if (input.currency) item.revenue.currency = input.currency;
+    /* Pre-revenue cannot also be profitable. Rejecting it would be pedantic
+       over a checkbox nobody meant to tick, so it is quietly impossible. */
+    item.revenue.profitable = Boolean(input.profitable) && item.revenue.monthlyMinor > 0;
+    item.revenue.reportedAt = new Date();
+  } else {
+    /* Withdrawn, not zeroed. Zero is a real answer — pre-revenue — so taking
+       the figure down has to clear the flag, not set the number to nothing. */
+    item.revenue.disclosed = false;
+    item.revenue.monthlyMinor = 0;
+    item.revenue.profitable = false;
+    item.revenue.reportedAt = null;
+  }
+
+  await item.save();
+
+  /* Audited even when the owner does it. A public revenue claim that changes
+     silently is exactly the kind of thing a dispute later turns on. */
+  await audit(req, {
+    action: 'item.revenue',
+    targetType: 'item',
+    targetId: item._id,
+    targetLabel: item.name,
+    summary: input.disclosed
+      ? `Reported ${item.revenue.monthlyMinor / 100} ${item.revenue.currency}/mo on "${item.name}"`
+      : `Withdrew the revenue figure on "${item.name}"`,
+    before,
+    after: { disclosed: item.revenue.disclosed, monthlyMinor: item.revenue.monthlyMinor },
+  });
+
+  res.json({ success: true, data: toItemResponse(item) });
 }

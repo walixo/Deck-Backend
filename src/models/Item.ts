@@ -1,5 +1,5 @@
 import mongoose, { Schema, type Document, type Model } from 'mongoose';
-import { PRICING_MODELS, type Category, type PricingModel } from '../constants';
+import { CURRENCY, PRICING_MODELS, type Category, type PricingModel } from '../constants';
 
 /**
  * The launcher's optional fundraise.
@@ -30,6 +30,37 @@ export interface IFundraise {
   pitch?: string;
   /** Set when the launcher stops accepting money without deleting the history. */
   closedAt?: Date | null;
+}
+
+/**
+ * What the maker says the product earns.
+ *
+ * Self-reported and unverifiable — Deck has no access to anybody's Stripe —
+ * which is why `reportedAt` is not optional. A revenue figure with no date on
+ * it is close to worthless: "$10k a month" from eighteen months ago reads as a
+ * present-tense claim, and the reader has no way to know. The page shows the
+ * date beside the number and marks it stale once it ages.
+ *
+ * `disclosed` exists so that zero can mean zero. Without it, "pre-revenue" and
+ * "would rather not say" collapse into the same stored value, and the great
+ * majority of launches are the second one.
+ */
+export interface IItemRevenue {
+  disclosed: boolean;
+  /** Integer minor units per month. Zero with `disclosed` is pre-revenue. */
+  monthlyMinor: number;
+  currency: string;
+  /**
+   * Whether the maker says the product covers its costs.
+   *
+   * Declared, not derived. Deriving it would mean asking makers to publish
+   * their cost base as well, which most will not do — and a signal that is
+   * almost never present is not a signal. False means "not claimed", not
+   * "loss-making": there is no way to tell those apart and the page does not
+   * try, it simply shows nothing.
+   */
+  profitable: boolean;
+  reportedAt: Date | null;
 }
 
 export interface IItem extends Document {
@@ -69,6 +100,7 @@ export interface IItem extends Document {
   ratingSum: number;
   ratingAvg: number;
   fundraise: IFundraise;
+  revenue: IItemRevenue;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -111,6 +143,17 @@ const fundraiseSchema = new Schema<IFundraise>(
     contributorCount: { type: Number, default: 0, min: 0 },
     pitch: { type: String, trim: true, maxlength: 600 },
     closedAt: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
+const revenueSchema = new Schema<IItemRevenue>(
+  {
+    disclosed: { type: Boolean, default: false },
+    monthlyMinor: { type: Number, default: 0, min: 0 },
+    currency: { type: String, default: CURRENCY, uppercase: true, trim: true },
+    profitable: { type: Boolean, default: false },
+    reportedAt: { type: Date, default: null },
   },
   { _id: false },
 );
@@ -214,6 +257,13 @@ const itemSchema = new Schema<IItem>(
     ratingSum: { type: Number, default: 0, min: 0 },
     ratingAvg: { type: Number, default: 0, min: 0, max: 5 },
     fundraise: { type: fundraiseSchema, default: () => ({}) },
+
+    /*
+     * Not indexed, and nothing sorts by it — the same rule as view counts, for
+     * a stronger reason. This is a number the maker types in about themselves.
+     * Ranking by it would put a text field on the leaderboard.
+     */
+    revenue: { type: revenueSchema, default: () => ({}) },
   },
   {
     timestamps: true,

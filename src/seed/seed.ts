@@ -195,6 +195,21 @@ async function seed(): Promise<void> {
        */
       item.viewCount =
         item.voteCount * 17 + item.commentCount * 11 + (item.slug.length % 7) * 23 + 9;
+
+      /*
+       * Roughly a third of launches publish a revenue figure, and one of those
+       * is pre-revenue — which is the state most worth having in the fixture,
+       * because "Pre-revenue" and "no figure at all" render differently and
+       * only a seed that contains both will ever show the difference.
+       */
+      const bucket = item.slug.length % 6;
+      if (bucket < 2) {
+        item.revenue.disclosed = true;
+        item.revenue.currency = 'USD';
+        item.revenue.monthlyMinor = bucket === 0 ? 0 : (item.voteCount * 37 + 120) * 100;
+        item.revenue.profitable = item.revenue.monthlyMinor > 0 && item.voteCount % 2 === 0;
+        item.revenue.reportedAt = addDays(new Date(), -(item.slug.length % 40));
+      }
       await item.save();
 
       /*
@@ -245,7 +260,8 @@ async function seed(): Promise<void> {
   await Notification.insertMany(
     items.slice(0, 4).map((item, index) => ({
       user: bellOwner,
-      kind: index === 0 ? 'account.verified' : index === 1 ? 'launch.milestone' : 'comment.received',
+      kind:
+        index === 0 ? 'account.verified' : index === 1 ? 'launch.milestone' : 'comment.received',
       title:
         index === 0
           ? 'Your account is verified'

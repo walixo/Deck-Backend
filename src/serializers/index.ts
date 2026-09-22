@@ -116,6 +116,19 @@ export function toItemResponse(item: IItem, votedItemIds?: Set<string>) {
     lineage: item.lineage ? item.lineage.toString() : item._id.toString(),
     ratingAvg: Math.round(item.ratingAvg * 10) / 10,
     fundraise: toFundraiseResponse(item),
+    /*
+     * Absent unless the maker published one, so the client has nothing to
+     * decide: no key means no revenue block, rather than a zero that has to be
+     * told apart from a real pre-revenue zero.
+     */
+    revenue: item.revenue?.disclosed
+      ? {
+          monthlyMinor: item.revenue.monthlyMinor,
+          currency: item.revenue.currency,
+          profitable: item.revenue.profitable,
+          reportedAt: item.revenue.reportedAt,
+        }
+      : undefined,
     createdAt: item.createdAt,
     hasVoted: votedItemIds ? votedItemIds.has(item._id.toString()) : false,
     submittedBy: isPopulatedUser(submitter)

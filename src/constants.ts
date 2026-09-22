@@ -304,6 +304,7 @@ export const AUDIT_ACTIONS = [
   'game.removed',
   'ad.approved',
   'ad.rejected',
+  'item.revenue',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

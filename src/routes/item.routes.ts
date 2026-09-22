@@ -10,6 +10,7 @@ import {
   listItems,
   releaseItem,
   updateItem,
+  updateRevenue,
 } from '../controllers/item.controller';
 import {
   applyForFundraise,
@@ -33,6 +34,7 @@ import {
   listItemsSchema,
   releaseItemSchema,
   updateItemSchema,
+  updateRevenueSchema,
 } from '../validators/item.validators';
 
 const router = Router();
@@ -70,6 +72,15 @@ router.post(
   asyncHandler(requireAuth),
   validate(applyFundraiseSchema),
   asyncHandler(applyForFundraise),
+);
+
+/* Keyed on the slug and not the id, like the other owner-facing routes here,
+   and deliberately not behind the edit window — see the controller. */
+router.patch(
+  '/:slug/revenue',
+  asyncHandler(requireAuth),
+  validate(updateRevenueSchema),
+  asyncHandler(updateRevenue),
 );
 
 router.get('/:slug/contributions', asyncHandler(listContributions));
