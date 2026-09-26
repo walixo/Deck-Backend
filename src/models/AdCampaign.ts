@@ -43,6 +43,13 @@ export interface IAdCampaign extends Document {
   status: AdStatus;
   rejectionReason?: string;
   reviewedAt?: Date;
+  /**
+   * Set when staff pull a live campaign. Kept apart from `rejectionReason`
+   * because they are different events with different consequences: a
+   * rejection happens before any money moves, a pull after it has.
+   */
+  cancelReason?: string;
+  cancelledAt?: Date;
 
   paidAt?: Date;
   authorizationUrl?: string;
@@ -76,6 +83,8 @@ const adCampaignSchema = new Schema<IAdCampaign>(
     status: { type: String, enum: AD_STATUSES, default: 'pending_review', index: true },
     rejectionReason: { type: String, trim: true, maxlength: 400 },
     reviewedAt: Date,
+    cancelReason: { type: String, trim: true, maxlength: 400 },
+    cancelledAt: Date,
 
     paidAt: Date,
     authorizationUrl: { type: String, trim: true },

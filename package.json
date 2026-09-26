@@ -25,7 +25,9 @@
     "seed-future-gen": "tsx src/scripts/seed-future-gen.ts",
     "seed-forum": "tsx src/scripts/seed-forum.ts",
     "seed-acquisitions": "tsx src/scripts/seed-acquisitions.ts",
-    "seed-games": "tsx src/scripts/seed-games.ts"
+    "seed-games": "tsx src/scripts/seed-games.ts",
+    "seed-categories": "tsx src/scripts/seed-categories.ts",
+    "seed-categories:prod": "node dist/scripts/seed-categories.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

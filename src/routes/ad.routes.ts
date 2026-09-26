@@ -4,7 +4,9 @@ import {
   getRateCard,
   listMyAds,
   listPendingAds,
+  listRunningAds,
   payForAd,
+  pullAd,
   recordAdClick,
   reviewAd,
   serveAd,
@@ -13,7 +15,7 @@ import { requireAuth } from '../middleware/auth';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
-import { createAdSchema, rejectAdSchema } from '../validators/ad.validators';
+import { createAdSchema, pullAdSchema, rejectAdSchema } from '../validators/ad.validators';
 
 const router = Router();
 
@@ -26,6 +28,7 @@ router.post('/:reference/click', asyncHandler(recordAdClick));
 /* Fixed segments before the reference, or "mine" and "pending" are swallowed. */
 router.get('/mine', asyncHandler(requireAuth), asyncHandler(listMyAds));
 router.get('/pending', asyncHandler(requireAuth), requireAdmin, asyncHandler(listPendingAds));
+router.get('/running', asyncHandler(requireAuth), requireAdmin, asyncHandler(listRunningAds));
 
 router.post('/', asyncHandler(requireAuth), validate(createAdSchema), asyncHandler(createAd));
 router.post('/:reference/pay', asyncHandler(requireAuth), asyncHandler(payForAd));
@@ -37,6 +40,13 @@ router.post(
   requireAdmin,
   validate(rejectAdSchema),
   asyncHandler(reviewAd),
+);
+router.post(
+  '/:reference/pull',
+  asyncHandler(requireAuth),
+  requireAdmin,
+  validate(pullAdSchema),
+  asyncHandler(pullAd),
 );
 
 export default router;

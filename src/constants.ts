@@ -57,6 +57,15 @@ export const SEED_CATEGORIES = [
   { slug: 'ai-tool', label: 'AI Tools', icon: 'sparkles', order: 20 },
   { slug: 'claude-skill', label: 'Claude Skills', icon: 'puzzle-piece', order: 30 },
   { slug: 'developer-tool', label: 'Developer Tools', icon: 'command-line', order: 40 },
+  /* Added through the admin area in development first, then brought here so
+     `seed-categories` gives a fresh production database the same list. */
+  {
+    slug: 'security-privacy',
+    label: 'Security & Privacy',
+    icon: 'lock-closed',
+    blurb: 'Auth, encryption and the tools that keep data yours',
+    order: 45,
+  },
   { slug: 'mobile-app', label: 'Mobile Apps', icon: 'device-phone-mobile', order: 50 },
   { slug: 'website', label: 'Websites', icon: 'globe-alt', order: 60 },
   { slug: 'hardware', label: 'Hardware', icon: 'cube', order: 70 },
@@ -201,12 +210,14 @@ export const ACQUISITION_FEE_PERCENT = Number(process.env.ACQUISITION_FEE_PERCEN
 
 /* ------------------------------------------------------------------ ads --- */
 
-/** Where a paid placement can appear. One live ad per placement at a time. */
+/** Where a paid placement can appear. */
 export const AD_PLACEMENTS = ['home', 'discover', 'board'] as const;
 export type AdPlacement = (typeof AD_PLACEMENTS)[number];
 
+/* Each label names where the slot actually renders — the home one used to
+   promise a launch wall the landing page no longer has. */
 export const AD_PLACEMENT_LABELS: Record<AdPlacement, string> = {
-  home: 'Home, under the launch wall',
+  home: 'Home, under the launch showcase',
   discover: 'Discover, above the results',
   board: 'The daily board, above the rankings',
 };
@@ -223,6 +234,20 @@ export const AD_DAY_RATE_MINOR: Record<AdPlacement, number> = {
   discover: Number(process.env.AD_RATE_DISCOVER_MINOR ?? 1_000_000),
   board: Number(process.env.AD_RATE_BOARD_MINOR ?? 800_000),
 };
+
+/**
+ * How many paid ads may run in one placement at the same moment.
+ *
+ * One, by default: an advertiser who buys the board for a week gets the board
+ * for a week, not a share of it. The rate card is priced per slot per day, so
+ * selling the same day to several advertisers at full price — which nothing
+ * used to prevent — charged each of them for impressions the others were
+ * getting. Raise it only alongside a rate card that is priced as a share.
+ *
+ * A seat is held by payment, not by booking or approval: the first approved
+ * campaign to pay gets the dates. See `services/adInventory`.
+ */
+export const AD_SLOT_CAPACITY = Math.max(1, Number(process.env.AD_SLOT_CAPACITY ?? 1));
 
 /** The only run lengths on offer. Arbitrary durations invite pro-rata bugs. */
 export const AD_DURATIONS = [7, 14, 30] as const;
@@ -304,6 +329,7 @@ export const AUDIT_ACTIONS = [
   'game.removed',
   'ad.approved',
   'ad.rejected',
+  'ad.pulled',
   'item.revenue',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

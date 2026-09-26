@@ -293,6 +293,25 @@ visitor, then open the `users` collection in Atlas and change that document's
 writes no audit entry, which the script does, so prefer the command when you
 have the choice.
 
+### Then add the categories
+
+A fresh database has no launch categories, and without them every submission
+is rejected ("Pick a category from the list"). `seed` is where they used to
+come from, and `seed` is off the table, so they have a command of their own:
+
+```bash
+npm run seed-categories:prod -- --dry-run   # on the production host: list what it would add
+npm run seed-categories:prod                # then add them
+
+# Or from your laptop, the same way as create-admin above:
+MONGODB_URI="<the production connection string>" npm run seed-categories -- --dry-run
+MONGODB_URI="<the production connection string>" npm run seed-categories
+```
+
+It only inserts categories whose slug is missing. It never deletes and never
+overwrites one that exists, so it is safe to re-run, and it will not undo a
+label or order you changed in the admin area.
+
 ## 4. Paystack
 
 Switch the dashboard to live mode, take the live secret key, and set the
@@ -379,6 +398,6 @@ what `unfurl.ts` already does. Roughly an hour's work. Not done yet.
 - [ ] `npm run check:cloudinary:prod` passes **on Render**, not just locally
 - [ ] `TRUST_PROXY` set if and only if there is a proxy
 - [ ] Paystack in live mode, webhook pointed at the API host
-- [ ] `create-admin:prod` run; `seed` not run
+- [ ] `create-admin:prod` and `seed-categories:prod` run; `seed` not run
 - [ ] Both `REPLACE-WITH-YOUR-API-HOST` placeholders edited in `vercel.json`
 - [ ] `GET /api/health` returns 200 through the Vercel domain

@@ -1,10 +1,6 @@
 import type mongoose from 'mongoose';
 import { env } from '../config/env';
-import {
-  ACQUISITION_FEE_PERCENT,
-  FUNDRAISE_MIN_COMMENTS,
-  FUNDRAISE_MIN_VOTES,
-} from '../constants';
+import { ACQUISITION_FEE_PERCENT, FUNDRAISE_MIN_COMMENTS, FUNDRAISE_MIN_VOTES } from '../constants';
 import type { IAcquisition, IBid } from '../models/Acquisition';
 import type { IAdCampaign } from '../models/AdCampaign';
 import type { IComment } from '../models/Comment';
@@ -278,8 +274,7 @@ export function toFundraiseResponse(item: Pick<IItem, 'fundraise' | 'voteCount' 
       votesNeeded: FUNDRAISE_MIN_VOTES,
       comments: item.commentCount,
       commentsNeeded: FUNDRAISE_MIN_COMMENTS,
-      met:
-        item.voteCount >= FUNDRAISE_MIN_VOTES && item.commentCount >= FUNDRAISE_MIN_COMMENTS,
+      met: item.voteCount >= FUNDRAISE_MIN_VOTES && item.commentCount >= FUNDRAISE_MIN_COMMENTS,
     },
     /* The maker's view of where their application stands. Safe to expose
        publicly: it says a raise was applied for, not what was written in it. */
@@ -357,6 +352,8 @@ export function toAdCampaignResponse(campaign: IAdCampaign) {
     status: campaign.status,
     phase: adWindow(campaign),
     rejectionReason: campaign.rejectionReason,
+    cancelReason: campaign.cancelReason,
+    cancelledAt: campaign.cancelledAt,
     impressions: campaign.impressions,
     clicks: campaign.clicks,
     /* Divide-by-zero guarded: a campaign that has never served has no rate. */

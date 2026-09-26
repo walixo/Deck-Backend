@@ -40,5 +40,12 @@ export const rejectAdSchema = z.object({
   reason: z.string().trim().min(4, 'Tell them why').max(400),
 });
 
+/* Shown to the advertiser and kept in the audit trail. A pull happens after
+   money has moved, so the reason is not optional. */
+export const pullAdSchema = z.object({
+  reason: z.string().trim().min(4, 'Say why it is coming down').max(400),
+});
+
 export type CreateAdInput = z.infer<typeof createAdSchema>;
+export type PullAdInput = z.infer<typeof pullAdSchema>;
 export type RejectAdInput = z.infer<typeof rejectAdSchema>;

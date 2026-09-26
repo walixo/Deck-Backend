@@ -9,6 +9,7 @@ import {
   verifyWebhookSignature,
   type VerifiedTransaction,
 } from '../services/paystack';
+import { nextOpening } from '../services/adInventory';
 import { evaluateBadges } from '../services/badges';
 import { formatMinor, notify } from '../services/notify';
 import { toAdCampaignResponse, toContributionResponse, toOrderResponse } from '../serializers';
@@ -175,7 +176,12 @@ export async function applyVerifiedAdPayment(
       );
     }
 
-    const startAt = campaign.startAt.getTime() < Date.now() ? new Date() : campaign.startAt;
+    const requested = campaign.startAt.getTime() < Date.now() ? new Date() : campaign.startAt;
+    /* The backstop for two advertisers paying for the last seat in the same
+       minute (see services/adInventory). Money has already moved, so rather
+       than overbook the slot, the later payment starts at the next opening —
+       usually `requested` itself — and still gets every day it paid for. */
+    const startAt = await nextOpening(campaign.placement, campaign.days, requested, campaign._id);
 
     campaign.status = 'live';
     campaign.paidAt = verified.paidAt ? new Date(verified.paidAt) : new Date();

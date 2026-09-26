@@ -6,16 +6,18 @@ import {
   AD_DURATIONS,
   AD_PLACEMENT_LABELS,
   AD_PLACEMENTS,
+  AD_SLOT_CAPACITY,
   CURRENCY,
   type AdPlacement,
 } from '../constants';
 import { AdCampaign } from '../models/AdCampaign';
 import { Item } from '../models/Item';
+import { assertSlotOpen } from '../services/adInventory';
 import { audit } from '../services/audit';
 import { initializeTransaction, paystackConfigured } from '../services/paystack';
 import { toAdCampaignResponse, toServedAdResponse } from '../serializers';
 import { ApiError } from '../utils/ApiError';
-import type { CreateAdInput, RejectAdInput } from '../validators/ad.validators';
+import type { CreateAdInput, PullAdInput, RejectAdInput } from '../validators/ad.validators';
 
 /** Same alphabet as every other Deck reference: no 0/O/1/I. */
 function adReference(): string {
@@ -33,6 +35,9 @@ export function getRateCard(_req: Request, res: Response): void {
     data: {
       currency: CURRENCY,
       durations: AD_DURATIONS,
+      /* How many ads share a slot at once, so the form can say whether a
+         booking buys the slot outright or a turn in a rotation. */
+      capacity: AD_SLOT_CAPACITY,
       placements: AD_PLACEMENTS.map((placement) => ({
         placement,
         label: AD_PLACEMENT_LABELS[placement],
@@ -68,6 +73,10 @@ export async function createAd(req: Request, res: Response): Promise<void> {
   if (startAt.getTime() < Date.now() - DAY_MS) {
     throw ApiError.badRequest('A campaign cannot start in the past');
   }
+
+  /* Before anything is written: an ad that could not run on these dates
+     should not reach the review queue at all. */
+  await assertSlotOpen(input.placement, startAt, input.days);
 
   const priceMinor = AD_DAY_RATE_MINOR[input.placement] * input.days;
 
@@ -125,13 +134,19 @@ export async function payForAd(req: Request, res: Response): Promise<void> {
         : 'This campaign is not waiting on payment',
     );
   }
-  if (!paystackConfigured()) {
-    throw ApiError.badRequest('Card payments are not configured on this server');
-  }
-
   if (campaign.startAt.getTime() < Date.now()) {
     campaign.startAt = new Date();
     campaign.endAt = new Date(Date.now() + campaign.days * DAY_MS);
+  }
+
+  /* The authoritative check. The slot may have been bought by somebody else
+     since this was booked, and it is far better to say so here than to take
+     the money for dates that are gone. Ahead of the configuration check, so
+     the advertiser hears about their dates rather than about the server. */
+  await assertSlotOpen(campaign.placement, campaign.startAt, campaign.days, campaign._id);
+
+  if (!paystackConfigured()) {
+    throw ApiError.badRequest('Card payments are not configured on this server');
   }
 
   const transaction = await initializeTransaction({
@@ -249,6 +264,72 @@ export async function reviewAd(req: Request, res: Response): Promise<void> {
       : `Rejected ad "${campaign.headline}": ${reason}`,
     before: { status: 'pending_review' },
     after: { status: campaign.status, rejectionReason: campaign.rejectionReason },
+  });
+
+  await campaign.populate('item', 'name slug logoUrl');
+
+  res.json({ success: true, data: toAdCampaignResponse(campaign) });
+}
+
+/**
+ * Everything paid for that has not finished: running now, or booked to start.
+ *
+ * The other half of the staff view. The review queue only ever shows campaigns
+ * before money moves; this is where a campaign lives afterwards, and where it
+ * can be pulled.
+ */
+export async function listRunningAds(_req: Request, res: Response): Promise<void> {
+  const campaigns = await AdCampaign.find({ status: 'live', endAt: { $gt: new Date() } })
+    .populate('item', 'name slug logoUrl')
+    .populate('advertiser', 'username name avatarUrl')
+    .sort({ startAt: 1 });
+
+  res.json({ success: true, data: campaigns.map(toAdCampaignResponse) });
+}
+
+/**
+ * Takes a paid campaign down, now.
+ *
+ * For what review missed — a creative that turns out to mislead, a launch that
+ * was removed, a complaint that holds up. It stops serving on the next slot
+ * request (pages that already hold the ad keep it for up to the five minutes
+ * the client caches a slot).
+ *
+ * Only a live campaign can be pulled. An approved one still waiting on payment
+ * is left alone on purpose: its advertiser may be at the Paystack checkout
+ * right now, and cancelling underneath them would take their money for an ad
+ * that can no longer run.
+ *
+ * It does not refund. Deck has no refund flow, so whatever the advertiser is
+ * owed for the unused days has to be returned from the Paystack dashboard; the
+ * audit entry records the days left so that figure is not a guess.
+ */
+export async function pullAd(req: Request, res: Response): Promise<void> {
+  const campaign = await AdCampaign.findOne({ reference: req.params.reference.toUpperCase() });
+  if (!campaign) throw ApiError.notFound('We could not find that campaign');
+
+  const now = Date.now();
+  if (campaign.status !== 'live' || campaign.endAt.getTime() <= now) {
+    throw ApiError.badRequest('Only a paid campaign that has not finished can be pulled');
+  }
+
+  const { reason } = req.body as PullAdInput;
+  const unusedFrom = Math.max(now, campaign.startAt.getTime());
+  const daysLeft = Math.ceil((campaign.endAt.getTime() - unusedFrom) / DAY_MS);
+
+  campaign.status = 'cancelled';
+  campaign.cancelReason = reason;
+  campaign.cancelledAt = new Date(now);
+  await campaign.save();
+
+  await audit(req, {
+    action: 'ad.pulled',
+    targetType: 'ad',
+    targetId: campaign.reference,
+    targetLabel: `${campaign.reference} — "${campaign.headline}"`,
+    summary: `Pulled ad "${campaign.headline}" from the ${campaign.placement} slot with ${daysLeft} of ${campaign.days} days left: ${reason}`,
+    before: { status: 'live' },
+    after: { status: 'cancelled', cancelReason: reason, daysLeft, priceMinor: campaign.priceMinor },
   });
 
   await campaign.populate('item', 'name slug logoUrl');
