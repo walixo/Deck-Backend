@@ -10,8 +10,8 @@
  * constant the renderer can assume.
  */
 export const ACCENTS: Record<string, { fill: string; ink: string }> = {
-  pop: { fill: '#b8a9fa', ink: '#180f43' },
-  deep: { fill: '#180f43', ink: '#b8a9fa' },
+  pop: { fill: '#c93a0c', ink: '#ffffff' },
+  deep: { fill: '#141413', ink: '#ffffff' },
   grey: { fill: '#9c9c99', ink: '#111111' },
 };
 
