@@ -180,9 +180,11 @@ deliberate — see `src/config/env.ts`.
 | `CLOUDINARY_CLOUD_NAME` | See *Images go to Cloudinary* below |
 | `CLOUDINARY_API_KEY` | |
 | `CLOUDINARY_API_SECRET` | |
-| `PAYSTACK_SECRET_KEY` | `sk_live_…` |
-| `PAYSTACK_CALLBACK_URL` | `https://yourdomain.com/orders/callback` |
-| `CURRENCY` | Must be one your Paystack account is enabled for |
+| `BACHS_SECRET_KEY` | `sk_live_…` (or `sk_sandbox_…` while testing) |
+| `BACHS_WEBHOOK_SECRET` | From the webhook endpoint you add in step 4 |
+| `PAYMENT_RETURN_URL` | `https://yourdomain.com/orders/callback` |
+| `PAYOUT_HOLD_DAYS` | `14` — days a sale is held before it can be transferred |
+| `CURRENCY` | Must be one your Bachs account is enabled for |
 
 `CLIENT_ORIGIN` still matters even though the rewrites remove CORS from the
 normal path: it is what protects the API from a browser on somebody else's
@@ -312,18 +314,54 @@ It only inserts categories whose slug is missing. It never deletes and never
 overwrites one that exists, so it is safe to re-run, and it will not undo a
 label or order you changed in the admin area.
 
-## 4. Paystack
+## 4. Bachs (payments and payouts)
 
-Switch the dashboard to live mode, take the live secret key, and set the
-webhook to:
+Every charge — merch, fundraise contributions, ad slots — goes through a Bachs
+hosted checkout. Sellers and launchers are paid by **transfer to their own
+Bachs sub-account**, after the hold in `PAYOUT_HOLD_DAYS`. Nobody records bank
+transfers by hand any more.
 
-```
-https://YOUR-API-HOST/api/payments/paystack/webhook
-```
+1. In the Bachs dashboard, enable **Connect** (sub-accounts) for your
+   organisation. Without it, sellers cannot onboard and nothing is transferred.
+2. Take the secret key. `sk_sandbox_…` talks to the sandbox, `sk_live_…` to
+   production — the API host is chosen from the prefix.
+3. Add a webhook endpoint with event source **all** (so Connect events such as
+   `capability.updated` arrive too), pointed at:
+
+   ```
+   https://YOUR-API-HOST/api/payments/bachs/webhook
+   ```
+
+   Copy its signing secret into `BACHS_WEBHOOK_SECRET`.
 
 It must point at the API host directly, **not** at the Vercel domain. The
-handler verifies Paystack's signature against the raw request body, and a proxy
+handler verifies Bachs's signature against the raw request body, and a proxy
 hop is a chance for those bytes to change.
+
+`PAYMENT_RETURN_URL` must be a public URL — Bachs may refuse `localhost`. To
+test checkout locally, use the deployed frontend's URL or a tunnel.
+
+Two background jobs run inside the API process (no queue or cron service):
+every 15 minutes, a sweep that cancels expired checkouts and catches any payment
+whose webhook went missing; every hour, a transfer run that pays cleared
+balances to active sub-accounts. Staff can trigger the transfer run from
+**Admin → Disbursements**. Transfers draw on the platform's *available* Bachs
+balance, so a run that finds the balance short marks those transfers refused
+and leaves the amounts owed for the next run.
+
+### Deck Games
+
+Nothing extra to configure: game purchases use the same Bachs keys, webhook and
+transfer run, and developers' 80% is paid with everyone else's. Things to know:
+
+- `GAME_FEE_PERCENT` (default 20) is Deck's cut of in-game purchases.
+- The SDK is served by the frontend at `/sdk/deck-games-v1.js`. It trusts
+  messages from `https://onedeck.africa` and `https://www.onedeck.africa`; on
+  any other production domain, edit `DEFAULT_ORIGINS` at the top of the file.
+- Developers call the server API at `https://onedeck.africa/api/games/v1`,
+  through the same Vercel rewrite as the site.
+- Never set `GAME_WEBHOOKS_ALLOW_PRIVATE` in production — it is ignored there
+  anyway, because it would let game webhooks reach internal addresses.
 
 ## 5. Social sign-in (optional)
 
@@ -397,7 +435,7 @@ what `unfurl.ts` already does. Roughly an hour's work. Not done yet.
 - [ ] All three `CLOUDINARY_*` variables set (no Persistent Disk needed)
 - [ ] `npm run check:cloudinary:prod` passes **on Render**, not just locally
 - [ ] `TRUST_PROXY` set if and only if there is a proxy
-- [ ] Paystack in live mode, webhook pointed at the API host
+- [ ] Bachs live key set, Connect enabled, webhook (source: all) pointed at the API host
 - [ ] `create-admin:prod` and `seed-categories:prod` run; `seed` not run
 - [ ] Both `REPLACE-WITH-YOUR-API-HOST` placeholders edited in `vercel.json`
 - [ ] `GET /api/health` returns 200 through the Vercel domain

@@ -1,6 +1,7 @@
 import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/db';
 import { env } from './config/env';
+import { startScheduler, stopScheduler } from './services/scheduler';
 
 /**
  * How long a shutdown may take before the process stops being polite.
@@ -22,6 +23,10 @@ async function bootstrap(): Promise<void> {
     console.log(`[server] Deck API listening on http://localhost:${env.port}`);
   });
 
+  /* Here and only here — not in createApp — so scripts and tests that build
+     the app never start sweeping orders or sending transfers by accident. */
+  startScheduler();
+
   let closing = false;
 
   const shutdown = (signal: string): void => {
@@ -30,6 +35,7 @@ async function bootstrap(): Promise<void> {
        closing and throws on the way out. */
     if (closing) return;
     closing = true;
+    stopScheduler();
 
     // eslint-disable-next-line no-console
     console.log(`\n[server] ${signal} received, shutting down`);

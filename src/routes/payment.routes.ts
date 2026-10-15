@@ -5,7 +5,10 @@ import { asyncHandler } from '../utils/asyncHandler';
 
 const router = Router();
 
-/** Called when the customer returns from Paystack's checkout. */
+/**
+ * Called when the customer returns from checkout. Answers for orders,
+ * contributions and ad campaigns alike, with a `kind` saying which.
+ */
 router.post('/:reference/verify', asyncHandler(requireAuth), asyncHandler(verifyOrderPayment));
 
 export default router;

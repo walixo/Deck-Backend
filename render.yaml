@@ -86,9 +86,18 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
-      - key: PAYSTACK_SECRET_KEY
+      # Payments — Bachs. Paste keys in the dashboard only; never in this file.
+      - key: BACHS_SECRET_KEY
         sync: false
-      - key: PAYSTACK_CALLBACK_URL
+      - key: BACHS_WEBHOOK_SECRET
         sync: false
+      # https://<your-frontend>/orders/callback — must be public, not localhost.
+      - key: PAYMENT_RETURN_URL
+        sync: false
+      - key: PAYOUT_HOLD_DAYS
+        value: "14"
+      # Deck Games: Deck keeps this percentage of in-game purchases.
+      - key: GAME_FEE_PERCENT
+        value: "20"
       - key: CURRENCY
         value: NGN

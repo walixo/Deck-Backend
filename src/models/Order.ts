@@ -48,15 +48,27 @@ export interface IShippingAddress {
   country: string;
 }
 
-/** What we know about the Paystack transaction backing this order. */
+/**
+ * What we know about the payment backing this order.
+ *
+ * `provider` stays a field rather than becoming implicit because orders
+ * outlive integrations: rows created under Paystack still say `paystack`, and
+ * a support query about one of those has to know which dashboard to open.
+ */
 export interface IPayment {
-  provider: 'paystack';
-  /** Paystack uses our order reference as its transaction reference. */
+  provider: 'bachs' | 'paystack';
+  /** Our order reference, sent to Bachs and echoed back on every event. */
   reference: string;
+  /** The hosted checkout to send the customer to. Kept under its old name so
+      the client's redirect did not have to change with the provider. */
   authorizationUrl?: string;
+  /** Bachs's checkout session (`chk_…`) — what `getCheckout` looks up. */
+  checkoutId?: string;
+  /** Bachs's charge (`ch_…`) — what a refund is issued against. */
+  chargeId?: string;
   paidAt?: Date;
   channel?: string;
-  /** Amount Paystack actually confirmed, kept for reconciliation. */
+  /** Amount the provider actually confirmed, kept for reconciliation. */
   amountMinor?: number;
 }
 
@@ -137,9 +149,11 @@ const orderSchema = new Schema<IOrder>(
     payment: {
       type: new Schema<IPayment>(
         {
-          provider: { type: String, default: 'paystack' },
+          provider: { type: String, enum: ['bachs', 'paystack'], default: 'bachs' },
           reference: { type: String, required: true },
           authorizationUrl: String,
+          checkoutId: { type: String, index: true },
+          chargeId: String,
           paidAt: Date,
           channel: String,
           amountMinor: Number,

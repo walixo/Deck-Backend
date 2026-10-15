@@ -6,7 +6,7 @@ import { CURRENCY, PRICING_MODELS, type Category, type PricingModel } from '../c
  *
  * Off by default and never implied — a launch has to opt in, and can opt back
  * out. `raisedMinor` and `contributorCount` are denormalised running totals,
- * incremented only when Paystack confirms a payment, so the progress bar costs
+ * incremented only when the payment provider confirms a payment, so the progress bar costs
  * no aggregation on every page view.
  */
 export interface FundraiseApplication {

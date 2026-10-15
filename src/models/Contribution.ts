@@ -4,7 +4,7 @@ import { CONTRIBUTION_STATUSES, CURRENCY, type ContributionStatus } from '../con
 /**
  * One person backing one launch.
  *
- * Keep-what-you-raise: a contribution that Paystack confirms is final. There is
+ * Keep-what-you-raise: a contribution the payment provider confirms is final. There is
  * no pledge state and no deadline to miss, so nothing here ever needs to be
  * unwound — which is also why the launch's running total can be incremented on
  * confirmation and trusted from then on.
@@ -30,6 +30,9 @@ export interface IContribution extends Document {
   /** Hides the name on the supporters list. The row still knows who paid. */
   anonymous: boolean;
   authorizationUrl?: string;
+  /** Bachs checkout session (`chk_…`) and the charge it produced (`ch_…`). */
+  checkoutId?: string;
+  chargeId?: string;
   paidAt?: Date;
   channel?: string;
   createdAt: Date;
@@ -51,6 +54,8 @@ const contributionSchema = new Schema<IContribution>(
     message: { type: String, trim: true, maxlength: 280 },
     anonymous: { type: Boolean, default: false },
     authorizationUrl: { type: String, trim: true },
+    checkoutId: { type: String, index: true },
+    chargeId: String,
     paidAt: Date,
     channel: String,
   },

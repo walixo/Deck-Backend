@@ -10,14 +10,37 @@ import {
   submitScore,
   updateGame,
 } from '../controllers/game.controller';
+import {
+  createProduct,
+  createPurchase,
+  createSession,
+  getDeveloperView,
+  getPurchase,
+  listEntitlements,
+  listProducts,
+  listSales,
+  mintKey,
+  mintWebhookSecretFor,
+  resendWebhook,
+  testWebhook,
+  updateDeveloperSettings,
+  updateProduct,
+} from '../controllers/gamePlatform.controller';
 import { optionalAuth, requireAuth } from '../middleware/auth';
+import { rateLimit } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
+import { listGamesSchema, submitGameSchema, updateGameSchema } from '../validators/game.validators';
 import {
-  listGamesSchema,
-  submitGameSchema,
-  updateGameSchema,
-} from '../validators/game.validators';
+  createProductSchema,
+  developerSettingsSchema,
+  mintKeySchema,
+  modeQuerySchema,
+  purchaseSchema,
+  salesQuerySchema,
+  sessionSchema,
+  updateProductSchema,
+} from '../validators/gamePlatform.validators';
 import { submitScoreSchema } from '../validators/score.validators';
 
 const router = Router();
@@ -61,6 +84,77 @@ router.post(
   asyncHandler(requireAuth),
   validate(submitScoreSchema),
   asyncHandler(submitScore),
+);
+
+/* ------------------------------------------- Deck Games platform --- */
+
+/* Generous for a player — a game asks for a session every few minutes at most
+   — and tight enough that a script cannot open a thousand checkouts. */
+const playerLimiter = rateLimit({ windowMs: 60_000, max: 40 });
+
+/* Two literal segments, so it can never be mistaken for `/:slug/...`. */
+router.get('/purchases/:reference', asyncHandler(requireAuth), asyncHandler(getPurchase));
+
+router.get('/:slug/products', asyncHandler(optionalAuth), asyncHandler(listProducts));
+router.post(
+  '/:slug/session',
+  playerLimiter,
+  asyncHandler(requireAuth),
+  validate(sessionSchema),
+  asyncHandler(createSession),
+);
+router.post(
+  '/:slug/purchases',
+  playerLimiter,
+  asyncHandler(requireAuth),
+  validate(purchaseSchema),
+  asyncHandler(createPurchase),
+);
+router.get(
+  '/:slug/entitlements',
+  asyncHandler(requireAuth),
+  validate(modeQuerySchema, 'query'),
+  asyncHandler(listEntitlements),
+);
+
+/* The developer's dashboard. Each handler checks the caller owns the game. */
+router.get('/:slug/developer', asyncHandler(requireAuth), asyncHandler(getDeveloperView));
+router.patch(
+  '/:slug/developer',
+  asyncHandler(requireAuth),
+  validate(developerSettingsSchema),
+  asyncHandler(updateDeveloperSettings),
+);
+router.post(
+  '/:slug/keys',
+  asyncHandler(requireAuth),
+  validate(mintKeySchema),
+  asyncHandler(mintKey),
+);
+router.post('/:slug/webhook-secret', asyncHandler(requireAuth), asyncHandler(mintWebhookSecretFor));
+router.post('/:slug/webhook/test', asyncHandler(requireAuth), asyncHandler(testWebhook));
+router.post(
+  '/:slug/products',
+  asyncHandler(requireAuth),
+  validate(createProductSchema),
+  asyncHandler(createProduct),
+);
+router.patch(
+  '/:slug/products/:productId',
+  asyncHandler(requireAuth),
+  validate(updateProductSchema),
+  asyncHandler(updateProduct),
+);
+router.get(
+  '/:slug/sales',
+  asyncHandler(requireAuth),
+  validate(salesQuerySchema, 'query'),
+  asyncHandler(listSales),
+);
+router.post(
+  '/:slug/sales/:reference/resend',
+  asyncHandler(requireAuth),
+  asyncHandler(resendWebhook),
 );
 
 export default router;

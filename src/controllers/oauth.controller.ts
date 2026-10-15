@@ -134,6 +134,7 @@ export async function oauthCallback(req: Request, res: Response): Promise<void> 
   } catch (error) {
     const message =
       error instanceof ApiError ? error.message : 'We could not complete that sign-in';
+    // eslint-disable-next-line no-console
     console.error('[oauth] callback failed', error);
     fail(message);
   }

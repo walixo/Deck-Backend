@@ -3,7 +3,7 @@ import express, { type Application } from 'express';
 import morgan from 'morgan';
 import { env } from './config/env';
 import { UPLOAD_DIR, UPLOAD_ROUTE } from './config/uploads';
-import { paystackWebhook } from './controllers/payment.controller';
+import { bachsWebhook } from './controllers/payment.controller';
 import { errorHandler, notFoundHandler } from './middleware/error';
 import { hasFrontendBuild, mountFrontend } from './middleware/unfurl';
 import routes from './routes';
@@ -77,14 +77,19 @@ export function createApp(): Application {
   );
 
   /*
-   * Paystack signs the raw request body, so the webhook must see the exact
+   * Bachs signs `"{timestamp}.{raw body}"`, so the webhook must see the exact
    * bytes sent. It is registered before express.json() — once that has parsed
    * and discarded the buffer, the signature can never be recomputed.
+   *
+   * Register this URL in the Bachs developer portal with event source `all`,
+   * so Connect events (sub-account capability changes) arrive here alongside
+   * payments. Point it at the API host, not the Vercel domain: a proxy hop is
+   * a chance for the bytes to change.
    */
   app.post(
-    '/api/payments/paystack/webhook',
+    '/api/payments/bachs/webhook',
     express.raw({ type: '*/*', limit: '1mb' }),
-    asyncHandler(paystackWebhook),
+    asyncHandler(bachsWebhook),
   );
 
   app.use(express.json({ limit: '1mb' }));

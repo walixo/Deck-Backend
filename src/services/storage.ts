@@ -22,7 +22,7 @@ import { UPLOAD_DIR, UPLOAD_ROUTE } from '../config/uploads';
  * **Disk when not.** Local development keeps working with no account, no keys
  * and no network — which matters, because the alternative is that nobody can
  * run the project without signing up for something. It is the same bargain
- * Paystack already has here: absent credentials disable the feature rather than
+ * payments already have here: absent credentials disable the feature rather than
  * break the app.
  *
  * The consequence to keep in mind is that the two produce *different shapes* of

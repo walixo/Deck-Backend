@@ -53,6 +53,9 @@ export interface IAdCampaign extends Document {
 
   paidAt?: Date;
   authorizationUrl?: string;
+  /** Bachs checkout session (`chk_…`) and the charge it produced (`ch_…`). */
+  checkoutId?: string;
+  chargeId?: string;
 
   impressions: number;
   clicks: number;
@@ -88,6 +91,8 @@ const adCampaignSchema = new Schema<IAdCampaign>(
 
     paidAt: Date,
     authorizationUrl: { type: String, trim: true },
+    checkoutId: { type: String, index: true },
+    chargeId: String,
 
     /* Counted on serve and on click. Honest about what they measure: a serve is
        a slot being filled, not proof a human looked at it. */

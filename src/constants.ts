@@ -122,10 +122,11 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 /**
  * Money is stored and moved as integer minor units everywhere — kobo for NGN,
  * cents for USD. Floats cannot represent 0.1 exactly, so a cart of three
- * 19.99 tees would drift; the client never sees or sends a decimal price. This
- * is also exactly the unit Paystack expects, so nothing is converted.
+ * 19.99 tees would drift; the client never sees or sends a decimal price. Bachs
+ * takes decimal strings, so `services/bachs.ts` converts at that one boundary
+ * and nowhere else.
  *
- * Set CURRENCY to something your Paystack account is enabled for.
+ * Set CURRENCY to something your Bachs account is enabled for.
  */
 export const CURRENCY = env.currency;
 
@@ -331,6 +332,7 @@ export const AUDIT_ACTIONS = [
   'ad.rejected',
   'ad.pulled',
   'item.revenue',
+  'payouts.run',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -382,5 +384,8 @@ export const NOTIFICATION_KINDS = [
   /* Money and parcels. */
   'fundraise.contribution',
   'order.status',
+  'payouts.ready',
+  'payout.sent',
+  'game.sale',
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];

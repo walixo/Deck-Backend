@@ -65,6 +65,8 @@ export const EMAILABLE_KINDS = new Set<NotificationKind>([
   'custom.reviewed',
   'content.moderated',
   'order.status',
+  'payouts.ready',
+  'payout.sent',
 ]);
 
 /**
@@ -132,6 +134,7 @@ export async function notify(event: NotificationEvent): Promise<void> {
       try {
         await channel.send(event);
       } catch (error) {
+        // eslint-disable-next-line no-console
         console.error(`[notify] ${channel.name} failed for ${event.kind}`, error);
       }
     }),

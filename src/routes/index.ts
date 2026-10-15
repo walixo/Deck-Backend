@@ -9,6 +9,7 @@ import authRoutes from './auth.routes';
 import commentRoutes from './comment.routes';
 import customRoutes from './custom.routes';
 import forumRoutes from './forum.routes';
+import gameApiRoutes from './gameApi.routes';
 import gameRoutes from './game.routes';
 import itemRoutes from './item.routes';
 import postRoutes from './post.routes';
@@ -43,6 +44,9 @@ router.use('/items', itemRoutes);
 router.use('/posts', postRoutes);
 router.use('/comments', commentRoutes);
 router.use('/forum', forumRoutes);
+/* Before `/games`: the developer server API has its own auth, and must never
+   fall through to the player-facing router. */
+router.use('/games/v1', gameApiRoutes);
 router.use('/games', gameRoutes);
 router.use('/custom', customRoutes);
 router.use('/leaderboard', leaderboardRoutes);

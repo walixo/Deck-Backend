@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
-import { env } from '../config/env';
 import {
   CURRENCY,
   FUNDRAISE_MIN_COMMENTS,
@@ -13,7 +12,7 @@ import { Item, type IItem } from '../models/Item';
 import { audit } from '../services/audit';
 import { notify } from '../services/notify';
 import { applyPlatformFee } from '../services/money';
-import { initializeTransaction, paystackConfigured } from '../services/paystack';
+import { bachsConfigured, checkoutReturnUrls, createCheckout } from '../services/bachs';
 import { toContributionResponse, toFundraiseResponse, toPublicUser } from '../serializers';
 import { ApiError } from '../utils/ApiError';
 import type {
@@ -87,7 +86,7 @@ export async function updateFundraise(req: Request, res: Response): Promise<void
  * figure, but what the launcher receives is derived from it server-side, so a
  * tampered payload can change how much someone gives and nothing else.
  *
- * The contribution is written `pending` and only counts once Paystack confirms
+ * The contribution is written `pending` and only counts once Bachs confirms
  * the charge. Nothing is added to the running total on the strength of the
  * browser coming back from checkout.
  */
@@ -113,8 +112,8 @@ export async function createContribution(req: Request, res: Response): Promise<v
     throw ApiError.badRequest('That amount is outside what we can take');
   }
 
-  if (!paystackConfigured()) {
-    throw ApiError.badRequest('Card payments are not configured on this server');
+  if (!bachsConfigured()) {
+    throw ApiError.badRequest('Payments are not configured on this server');
   }
 
   const { feeMinor, netMinor } = applyPlatformFee(amountMinor);
@@ -136,23 +135,25 @@ export async function createContribution(req: Request, res: Response): Promise<v
   });
 
   try {
-    const transaction = await initializeTransaction({
-      email: user.email,
+    const checkout = await createCheckout({
       amountMinor,
-      reference,
       currency: CURRENCY,
-      callbackUrl: `${env.paystackCallbackUrl}?reference=${reference}`,
-      metadata: { contributionId: contribution.id, itemSlug: item.slug, kind: 'contribution' },
+      email: user.email,
+      name: user.name,
+      reference,
+      ...checkoutReturnUrls(reference),
+      metadata: { kind: 'contribution', contributionId: contribution.id, itemSlug: item.slug },
     });
 
-    contribution.authorizationUrl = transaction.authorizationUrl;
+    contribution.authorizationUrl = checkout.checkoutUrl;
+    contribution.checkoutId = checkout.checkoutId;
     await contribution.save();
 
     res.status(201).json({
       success: true,
       data: {
         ...toContributionResponse(contribution),
-        authorizationUrl: transaction.authorizationUrl,
+        authorizationUrl: checkout.checkoutUrl,
       },
     });
   } catch (error) {

@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { env } from '../config/env';
 import { CURRENCY, PLATFORM_FEE_PERCENT } from '../constants';
 import { MerchProduct } from '../models/MerchProduct';
 import { balanceFor } from '../services/ledger';
@@ -39,9 +40,19 @@ export async function getMyEarnings(req: Request, res: Response): Promise<void> 
         feeMinor: balance.fundraiseFeeMinor,
         contributions: balance.contributions,
       },
+      games: {
+        netMinor: balance.gamesNetMinor,
+        feeMinor: balance.gamesFeeMinor,
+        sales: balance.gameSales,
+      },
       earnedMinor: balance.earnedMinor,
       paidOutMinor: balance.paidOutMinor,
       owedMinor: balance.owedMinor,
+      /* The owed figure split by the hold: what the next transfer run can
+         send, and what is still inside the refund window. */
+      availableMinor: balance.availableMinor,
+      heldMinor: balance.heldMinor,
+      holdDays: env.payoutHoldDays,
       listings: Object.fromEntries(listingCounts.map((row) => [row._id, row.count])),
     },
   });

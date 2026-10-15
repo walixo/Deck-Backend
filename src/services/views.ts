@@ -74,6 +74,7 @@ export async function recordView(item: IItem, req: Request): Promise<boolean> {
        the common path and not a failure. Anything else is a real problem with
        the database, and the page still renders without a view being logged. */
     if ((error as { code?: number }).code !== 11000) {
+      // eslint-disable-next-line no-console
       console.error('[views] could not record a view', error);
     }
     return false;
@@ -103,6 +104,7 @@ export async function recordView(item: IItem, req: Request): Promise<boolean> {
   } catch (error) {
     /* The ledger row is already written, so this view is lost until the window
        closes. One view, and the alternative is failing the whole page. */
+    // eslint-disable-next-line no-console
     console.error('[views] could not increment a view count', error);
     return false;
   }

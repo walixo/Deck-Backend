@@ -17,6 +17,14 @@ import type {
 
 const AUTHOR_FIELDS = 'name username avatarUrl headline verified';
 
+/*
+ * Words a game may not be slugged as. Deck Games' own pages live beside games
+ * under `/games/…` — the developer area, purchase returns, the server API —
+ * and a game called "Developers" would otherwise sit at a URL the router
+ * gives to something else. Treated as taken, so it gets a suffix instead.
+ */
+const RESERVED_SLUGS = new Set(['developers', 'purchase', 'purchases', 'v1', 'mine', 'new', 'docs']);
+
 /** The arcade. Approved games only, Deck's featured ones first. */
 export async function listGames(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as ListGamesQuery;
@@ -84,8 +92,10 @@ export async function submitGame(req: Request, res: Response): Promise<void> {
 
   const game = await Game.create({
     title: input.title,
-    slug: await uniqueSlug(input.title, async (candidate) =>
-      Boolean(await Game.exists({ slug: candidate })),
+    slug: await uniqueSlug(
+      input.title,
+      async (candidate) =>
+        RESERVED_SLUGS.has(candidate) || Boolean(await Game.exists({ slug: candidate })),
     ),
     tagline: input.tagline,
     description: input.description,
@@ -93,6 +103,9 @@ export async function submitGame(req: Request, res: Response): Promise<void> {
     coverUrl: input.coverUrl ?? '',
     kind: 'external',
     playUrl: input.playUrl,
+    orientation: input.orientation,
+    sdk: input.sdk,
+    studio: input.studio ?? '',
     author: req.user!._id,
     status: 'pending',
   });
@@ -131,6 +144,9 @@ export async function updateGame(req: Request, res: Response): Promise<void> {
   if (input.genre !== undefined) game.genre = input.genre;
   if (input.coverUrl !== undefined) game.coverUrl = input.coverUrl;
   if (input.playUrl !== undefined && game.kind === 'external') game.playUrl = input.playUrl;
+  if (input.orientation !== undefined) game.orientation = input.orientation;
+  if (input.sdk !== undefined) game.sdk = input.sdk;
+  if (input.studio !== undefined) game.studio = input.studio;
 
   if (isAuthor && game.status === 'rejected') {
     game.status = 'pending';

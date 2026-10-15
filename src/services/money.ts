@@ -24,6 +24,18 @@ export function applyPlatformFee(grossMinor: number): FeeSplit {
 }
 
 /**
+ * The split on an in-game purchase: Deck's fee and the developer's share.
+ * Same rounding rule as everything else — the fee is rounded, the share is the
+ * remainder — so the two always add back to what the player paid.
+ */
+export function applyGameFee(grossMinor: number): FeeSplit {
+  const gross = Math.max(0, Math.round(grossMinor));
+  const feeMinor = Math.round((gross * env.gameFeePercent) / 100);
+
+  return { grossMinor: gross, feeMinor, netMinor: gross - feeMinor };
+}
+
+/**
  * Divides an amount across weighted parties so the parts sum to the whole.
  *
  * Used for shipping: one flat fee, several sellers, and no way to split it

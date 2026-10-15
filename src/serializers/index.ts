@@ -250,6 +250,10 @@ export function toPayoutResponse(payout: IPayout) {
     destination: payout.destination,
     note: payout.note,
     paidAt: payout.paidAt,
+    /* `pending` is a transfer sent but not yet confirmed; `failed` was
+       refused and its amount went back into what is owed. */
+    provider: payout.provider,
+    status: payout.status,
   };
 }
 
@@ -457,6 +461,9 @@ export function toGameSummary(game: IGame) {
     reviewNote: game.reviewNote,
     plays: game.plays,
     featured: game.featured,
+    orientation: game.orientation ?? 'landscape',
+    sdk: game.sdk ?? false,
+    studio: game.studio ?? '',
     createdAt: game.createdAt,
     author: isPopulatedUser(author) ? toPublicUser(author) : null,
   };

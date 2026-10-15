@@ -2,6 +2,30 @@ import bcrypt from 'bcryptjs';
 import mongoose, { Schema, type Document, type Model } from 'mongoose';
 import { OAUTH_PROVIDERS, type OAuthProvider } from '../constants';
 
+/**
+ * Where this person is paid: their Bachs sub-account.
+ *
+ * Only the account id and whether it can receive money are kept. Identity
+ * documents and bank details are collected by Bachs on its own hosted
+ * onboarding page and never pass through Deck — which is the point of using
+ * hosted onboarding, and keeps a category of data out of this database (and
+ * out of the privacy policy's list of things Deck stores) entirely.
+ */
+export interface IPayoutAccount {
+  provider: 'bachs';
+  /** `acct_…` */
+  accountId: string;
+  /**
+   * Whether the `transfers` capability is active. Set from Bachs's
+   * `capability.updated` webhook, never from the onboarding redirect — Bachs's
+   * own docs warn that a person reaching the return URL proves nothing, and
+   * that an empty requirements list does not mean a capability is active.
+   */
+  transfersActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 /** A provider account bound to this Deck account. */
 export interface IIdentity {
   provider: OAuthProvider;
@@ -25,6 +49,7 @@ export interface IUser extends Document {
    */
   password?: string;
   identities: IIdentity[];
+  payoutAccount?: IPayoutAccount;
   avatarUrl?: string;
   bio?: string;
   headline?: string;
@@ -107,6 +132,18 @@ const userSchema = new Schema<IUser>(
      */
     verified: { type: Boolean, default: false, index: true },
     verifiedAt: { type: Date, default: null },
+
+    payoutAccount: {
+      type: new Schema<IPayoutAccount>(
+        {
+          provider: { type: String, enum: ['bachs'], default: 'bachs' },
+          accountId: { type: String, required: true },
+          transfersActive: { type: Boolean, default: false },
+        },
+        { _id: false, timestamps: true },
+      ),
+      required: false,
+    },
   },
   { timestamps: true },
 );
@@ -127,6 +164,10 @@ userSchema.methods.comparePassword = async function comparePassword(
   if (!this.password) return false;
   return bcrypt.compare(candidate, this.password);
 };
+
+/* Connect webhooks name the account, not the user — this is how a
+   `capability.updated` finds who it belongs to. */
+userSchema.index({ 'payoutAccount.accountId': 1 }, { unique: true, sparse: true });
 
 /* The lookup every social sign-in does: "which account owns this provider
    id". Unique across the collection, so one GitHub account cannot end up

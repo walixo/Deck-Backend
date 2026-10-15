@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
-import { env } from '../config/env';
 import {
   AD_DAY_RATE_MINOR,
   AD_DURATIONS,
@@ -14,7 +13,7 @@ import { AdCampaign } from '../models/AdCampaign';
 import { Item } from '../models/Item';
 import { assertSlotOpen } from '../services/adInventory';
 import { audit } from '../services/audit';
-import { initializeTransaction, paystackConfigured } from '../services/paystack';
+import { bachsConfigured, checkoutReturnUrls, createCheckout } from '../services/bachs';
 import { toAdCampaignResponse, toServedAdResponse } from '../serializers';
 import { ApiError } from '../utils/ApiError';
 import type { CreateAdInput, PullAdInput, RejectAdInput } from '../validators/ad.validators';
@@ -145,25 +144,27 @@ export async function payForAd(req: Request, res: Response): Promise<void> {
      the advertiser hears about their dates rather than about the server. */
   await assertSlotOpen(campaign.placement, campaign.startAt, campaign.days, campaign._id);
 
-  if (!paystackConfigured()) {
-    throw ApiError.badRequest('Card payments are not configured on this server');
+  if (!bachsConfigured()) {
+    throw ApiError.badRequest('Payments are not configured on this server');
   }
 
-  const transaction = await initializeTransaction({
-    email: user.email,
+  const checkout = await createCheckout({
     amountMinor: campaign.priceMinor,
-    reference: campaign.reference,
     currency: campaign.currency,
-    callbackUrl: `${env.paystackCallbackUrl}?reference=${campaign.reference}`,
-    metadata: { adId: campaign.id, kind: 'ad', placement: campaign.placement },
+    email: user.email,
+    name: user.name,
+    reference: campaign.reference,
+    ...checkoutReturnUrls(campaign.reference),
+    metadata: { kind: 'ad', adId: campaign.id, placement: campaign.placement },
   });
 
-  campaign.authorizationUrl = transaction.authorizationUrl;
+  campaign.authorizationUrl = checkout.checkoutUrl;
+  campaign.checkoutId = checkout.checkoutId;
   await campaign.save();
 
   res.json({
     success: true,
-    data: { ...toAdCampaignResponse(campaign), authorizationUrl: transaction.authorizationUrl },
+    data: { ...toAdCampaignResponse(campaign), authorizationUrl: checkout.checkoutUrl },
   });
 }
 
@@ -296,12 +297,12 @@ export async function listRunningAds(_req: Request, res: Response): Promise<void
  * the client caches a slot).
  *
  * Only a live campaign can be pulled. An approved one still waiting on payment
- * is left alone on purpose: its advertiser may be at the Paystack checkout
+ * is left alone on purpose: its advertiser may be at checkout
  * right now, and cancelling underneath them would take their money for an ad
  * that can no longer run.
  *
  * It does not refund. Deck has no refund flow, so whatever the advertiser is
- * owed for the unused days has to be returned from the Paystack dashboard; the
+ * owed for the unused days has to be returned from the Bachs dashboard; the
  * audit entry records the days left so that figure is not a guess.
  */
 export async function pullAd(req: Request, res: Response): Promise<void> {

@@ -20,7 +20,7 @@ import { putImage } from './storage';
  * OpenAI-compatible image endpoint — the shape most providers now expose. It is
  * entirely optional: with no key configured `lifestyleConfigured` is false, the
  * endpoint answers plainly, and the button never appears. Deck has one hard
- * dependency on a third party (Paystack) and this does not become the second.
+ * dependency on a third party (Bachs) and this does not become the second.
  */
 
 const API_KEY = process.env.IMAGE_API_KEY ?? '';

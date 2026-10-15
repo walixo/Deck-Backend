@@ -56,8 +56,8 @@ knowing without reading it:
   typo and is refused.
 - **`TRUST_PROXY`** only when something really does sit in front of Node.
   Without a proxy, trusting `X-Forwarded-For` lets any client claim any IP.
-- **Paystack** is optional. Without a secret key the shop runs but cannot take
-  card payments.
+- **Bachs** is optional. Without a secret key the shop runs but cannot take
+  payments, and no transfers are sent.
 - **Two collections appear on their own**, both behind the view counts in
   `services/views.ts`. `itemviews` is the dedupe ledger — it grows to roughly
   "distinct viewers in the last twelve hours" and MongoDB's TTL monitor empties

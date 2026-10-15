@@ -138,12 +138,43 @@ export const env = {
   mongoUri: requiredInProduction('MONGODB_URI', DEV_MONGO_URI),
   jwtSecret: readJwtSecret(),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
-  /* Paystack. The secret key is server-only and never sent to the browser;
-     without it the shop still runs, it just cannot take card payments. */
-  paystackSecretKey: process.env.PAYSTACK_SECRET_KEY ?? '',
-  /** Where Paystack returns the customer after checkout. */
-  paystackCallbackUrl: process.env.PAYSTACK_CALLBACK_URL ?? 'http://localhost:5173/orders/callback',
-  /** Must be a currency your Paystack account is enabled for (NGN, GHS, ZAR, KES, USD). */
+  /*
+   * Bachs — payments, sub-accounts and transfers. See services/bachs.
+   *
+   * The secret key is server-only and never sent to the browser. Without it
+   * the shop still runs, it just cannot take payments. The key's own prefix
+   * picks the host: `sk_sandbox_` goes to the sandbox, anything else to live.
+   * `BACHS_API_URL` overrides that, which is only for pointing at a mock.
+   */
+  bachs: {
+    secretKey: process.env.BACHS_SECRET_KEY ?? '',
+    /* Per webhook endpoint, from the Bachs developer portal → Webhooks. The
+       endpoint must have its event source set to `all` so Connect events
+       (account and capability changes) arrive alongside payments. */
+    webhookSecret: process.env.BACHS_WEBHOOK_SECRET ?? '',
+    apiUrl: process.env.BACHS_API_URL ?? '',
+  },
+  /**
+   * Where the customer lands after a hosted checkout. Bachs sends them to
+   * `success_url` or `cancel_url`; both point here with the reference
+   * attached, and the page confirms with the server rather than trusting the
+   * redirect. Previously `PAYSTACK_CALLBACK_URL`, which is still read so a
+   * deployment that has not renamed it keeps working.
+   */
+  paymentReturnUrl:
+    process.env.PAYMENT_RETURN_URL ??
+    process.env.PAYSTACK_CALLBACK_URL ??
+    'http://localhost:3000/orders/callback',
+  /**
+   * How long earnings sit before they are transferred to a sub-account.
+   *
+   * Money is collected into Deck's balance at sale time and only moved once
+   * this has passed, so a refund inside the window comes out before anybody
+   * has been paid rather than after. Fourteen days is the default chosen for
+   * Deck; the transfer run reads it fresh each time.
+   */
+  payoutHoldDays: Math.max(0, Number(process.env.PAYOUT_HOLD_DAYS ?? 14)),
+  /** Must be a currency your Bachs account is enabled for. */
   currency: (process.env.CURRENCY ?? 'NGN').toUpperCase(),
   /* Shipping, in minor units of CURRENCY. Defaults suit NGN (₦2,500 flat, free
      over ₦50,000) — change these when you change currency. */
@@ -156,10 +187,18 @@ export const env = {
    * should — but the fee is computed and recorded on every transaction either
    * way, so turning it on later needs no backfill.
    *
-   * Clamped to 0–50: a typo of `900` here would otherwise quietly hand Paystack
+   * Clamped to 0–50: a typo of `900` here would otherwise quietly hand Bachs
    * a split that swallows the seller's whole payout.
    */
   platformFeePercent: Math.min(50, Math.max(0, Number(process.env.PLATFORM_FEE_PERCENT ?? 0))),
+  /*
+   * Deck's cut of in-game purchases on Deck Games. 20 means the developer keeps
+   * 80%. Separate from PLATFORM_FEE_PERCENT because it is a different deal with
+   * different people: a seller ships goods, a developer ships a game Deck hosts,
+   * reviews and sells for them. Clamped like the other so a typo cannot take a
+   * developer's whole share.
+   */
+  gameFeePercent: Math.min(50, Math.max(0, Number(process.env.GAME_FEE_PERCENT ?? 20))),
 
   /*
    * How long a launch must wait before it can ship a new version.
@@ -172,8 +211,15 @@ export const env = {
    *
    * Product Hunt uses six months; Deck's board turns over daily rather than
    * weekly, so the same reasoning lands on a shorter number.
+   *
+   * TEMPORARILY OFF (October 2026): the default is 0, so a launch can ship a
+   * new version immediately. The controller already treats 0 as "no
+   * cooldown", so nothing else changed. To restore the rule, set
+   * `RELEASE_COOLDOWN_DAYS=30` on the API host — no deploy needed — or put the
+   * default back to 30 here. While it is off, the farming risk above is live:
+   * one product can re-enter today's board as often as its maker likes.
    */
-  releaseCooldownDays: Math.max(0, Number(process.env.RELEASE_COOLDOWN_DAYS ?? 30)),
+  releaseCooldownDays: Math.max(0, Number(process.env.RELEASE_COOLDOWN_DAYS ?? 0)),
 
   /*
    * How long after posting a launch stays editable.
@@ -238,6 +284,15 @@ export const env = {
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),
+  /**
+   * Lets game webhooks reach localhost and private addresses, over http — for
+   * running Deck and a game server on one machine. Honoured only outside
+   * production, whatever the variable says: in production this would reopen
+   * the SSRF hole the address check exists to close.
+   */
+  get allowPrivateWebhooks(): boolean {
+    return !this.isProduction && process.env.GAME_WEBHOOKS_ALLOW_PRIVATE === 'true';
+  },
   get isProduction(): boolean {
     return this.nodeEnv === 'production';
   },

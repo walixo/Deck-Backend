@@ -9,9 +9,8 @@ import {
 } from '../constants';
 import { MerchProduct } from '../models/MerchProduct';
 import { Order, type IOrderLine, type IOrderShare } from '../models/Order';
-import { env } from '../config/env';
 import { allocate, applyPlatformFee } from '../services/money';
-import { initializeTransaction, paystackConfigured } from '../services/paystack';
+import { bachsConfigured, checkoutReturnUrls, createCheckout } from '../services/bachs';
 import { toOrderResponse } from '../serializers';
 import { ApiError } from '../utils/ApiError';
 import type { CreateOrderInput } from '../validators/merch.validators';
@@ -39,13 +38,13 @@ export function shippingFor(subtotalMinor: number): number {
  * here. A tampered cart can therefore change *what* is ordered but never what
  * it costs.
  *
- * Once stock is reserved the order is created `awaiting_payment` and a Paystack
- * transaction is opened for it, using the order reference as the transaction
+ * Once stock is reserved the order is created `awaiting_payment` and a Bachs
+ * checkout session is opened for it, carrying the order reference as its
  * reference. The response carries an `authorizationUrl` for the browser to
- * redirect to. The order only becomes `paid` when Paystack itself confirms the
+ * redirect to. The order only becomes `paid` when Bachs itself confirms the
  * charge — see `payment.controller.ts`.
  *
- * With no PAYSTACK_SECRET_KEY set the shop still works end to end; orders just
+ * With no BACHS_SECRET_KEY set the shop still works end to end; orders just
  * stay `awaiting_payment` with no redirect.
  */
 export async function createOrder(req: Request, res: Response): Promise<void> {
@@ -200,20 +199,21 @@ export async function createOrder(req: Request, res: Response): Promise<void> {
 
     createdOrderId = order.id;
 
-    if (paystackConfigured()) {
-      const transaction = await initializeTransaction({
-        email: input.email,
+    if (bachsConfigured()) {
+      const checkout = await createCheckout({
         amountMinor: order.totalMinor,
-        reference,
         currency: order.currency,
-        callbackUrl: `${env.paystackCallbackUrl}?reference=${reference}`,
-        metadata: { orderId: order.id, deckReference: reference, kind: 'order' },
+        email: input.email,
+        reference,
+        ...checkoutReturnUrls(reference),
+        metadata: { kind: 'order', orderId: order.id },
       });
 
       order.payment = {
-        provider: 'paystack',
-        reference: transaction.reference,
-        authorizationUrl: transaction.authorizationUrl,
+        provider: 'bachs',
+        reference,
+        authorizationUrl: checkout.checkoutUrl,
+        checkoutId: checkout.checkoutId,
       };
       await order.save();
     }

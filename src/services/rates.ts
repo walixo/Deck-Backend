@@ -4,7 +4,7 @@ import { env } from '../config/env';
  * Exchange rates, for display only.
  *
  * **Naira is the ledger currency and nothing here changes that.** Every
- * `*Minor` field, every Paystack charge and every payout stays in kobo. What
+ * `*Minor` field, every charge and every payout is recorded in kobo. What
  * this provides is a number to *show* somebody in Toronto beside the naira
  * figure, so they know roughly what they are looking at before they decide to
  * care. The naira is always shown too, and the last screen before payment shows

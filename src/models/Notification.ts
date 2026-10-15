@@ -52,8 +52,19 @@ notificationSchema.index({ user: 1, createdAt: -1 });
  * for every signed-in reader. Partial rather than plain, so the index contains
  * only unread rows: it stays small no matter how much history accumulates, and
  * counting is a scan of exactly the documents being counted.
+ *
+ * Keyed on `{ user }` alone, and that is load-bearing. It was first declared
+ * on `{ user, createdAt }` — the same key pattern as the index above — and both
+ * got the auto-generated name `user_1_createdAt_-1`. The second collided with
+ * the first and was silently never built; Mongoose logged a duplicate-index
+ * warning at startup and the badge quietly used the plain index instead. A
+ * distinct key pattern gets a distinct name, and `countDocuments({ user,
+ * readAt: null })` matches the partial filter, so the planner can pick it.
  */
-notificationSchema.index({ user: 1, createdAt: -1 }, { partialFilterExpression: { readAt: null } });
+notificationSchema.index(
+  { user: 1 },
+  { name: 'unread_by_user', partialFilterExpression: { readAt: null } },
+);
 
 /*
  * Ninety days, then gone.
