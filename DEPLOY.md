@@ -369,8 +369,12 @@ GameID makes Deck an OAuth 2.0 / OpenID Connect provider: other developers'
 games show "Sign in with GameID". Until it has a signing key it stays switched
 off (its endpoints answer 503) — the rest of the API is unaffected.
 
-1. Generate a key: `npm run gameid:key` in the backend. It prints the PEM with
-   newlines as `\n`, ready to paste as one line.
+1. Generate a key in the backend folder with
+   `node scripts/gameid-key.mjs | pbcopy` — it goes straight to the clipboard,
+   one line, newlines written as `\n`. Use node directly rather than
+   `npm run`, which adds its own banner lines to the output. (The server
+   tolerates a stray banner, quotes or flattened newlines anyway, and says in
+   the log what is wrong if it still cannot read the key.)
 2. On Render set `GAMEID_PRIVATE_KEY` to that line, `GAMEID_ISSUER` to
    `https://onedeck.africa`, and let `GAMEID_SUBJECT_SECRET` generate.
    **Never change `GAMEID_SUBJECT_SECRET` afterwards** — every app's player IDs

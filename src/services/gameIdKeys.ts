@@ -15,12 +15,56 @@ import { env } from '../config/env';
 
 let cached: { privateKey: KeyObject; publicKey: KeyObject; kid: string } | null = null;
 
+/**
+ * Turns whatever was pasted into GAMEID_PRIVATE_KEY back into a clean PEM.
+ *
+ * A key survives a trip through a dashboard textarea in many shapes: newlines
+ * escaped as `\n`, newlines flattened into spaces, Windows line endings,
+ * wrapping quotes — or npm's own `> package@1.0.0 script` banner lines, if the
+ * generator was run without `-s` and piped to the clipboard. OpenSSL rejects
+ * all of those with an opaque DECODER error. So rather than parse what was
+ * given, find the BEGIN/END block, take only the base64 between them, and
+ * rebuild the PEM the way OpenSSL expects: 64-character lines.
+ */
+export function normalisePem(raw: string): string {
+  const text = raw.replace(/\\n/g, '\n').replace(/\\r/g, '').replace(/\r/g, '');
+  const match = text.match(/-----BEGIN ([A-Z ]+)-----([\s\S]*?)-----END \1-----/);
+  /* The base64 alone, its BEGIN/END lines lost in the copy: a PKCS#8 key is
+     the only thing our generator makes, so read it as one. */
+  const bare = text.replace(/[\s"']/g, '');
+  if (!match && /^[A-Za-z0-9+/]{600,}={0,2}$/.test(bare)) {
+    return `-----BEGIN PRIVATE KEY-----\n${(bare.match(/.{1,64}/g) ?? []).join('\n')}\n-----END PRIVATE KEY-----\n`;
+  }
+  if (!match) {
+    throw new Error(
+      'GAMEID_PRIVATE_KEY has no "-----BEGIN … PRIVATE KEY-----" block. Regenerate it with `node scripts/gameid-key.mjs | pbcopy` and paste again',
+    );
+  }
+  const [, label, body] = match;
+  const base64 = body.replace(/[^A-Za-z0-9+/=]/g, '');
+  if (!base64) throw new Error('GAMEID_PRIVATE_KEY has an empty key block');
+  const lines = base64.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----\n`;
+}
+
 function load() {
   if (cached) return cached;
 
   let privateKey: KeyObject;
   if (env.gameId.privateKey) {
-    privateKey = crypto.createPrivateKey(env.gameId.privateKey);
+    try {
+      privateKey = crypto.createPrivateKey(normalisePem(env.gameId.privateKey));
+    } catch (error) {
+      /* Never echo the value — only what is wrong with it. */
+      const reason = (error as Error).message.startsWith('GAMEID_PRIVATE_KEY')
+        ? (error as Error).message
+        : `GAMEID_PRIVATE_KEY is not a readable RSA private key (${(error as { code?: string }).code ?? 'unreadable'}). Regenerate it with \`node scripts/gameid-key.mjs | pbcopy\` and paste again`;
+      /* OpenSSL's own error carries a code, never the key material. */
+      throw new Error(reason, { cause: error });
+    }
+    if (privateKey.asymmetricKeyType !== 'rsa') {
+      throw new Error('GAMEID_PRIVATE_KEY must be an RSA key — ID tokens are signed RS256');
+    }
   } else {
     if (env.isProduction) {
       throw new Error('GAMEID_PRIVATE_KEY is not set — GameID cannot sign ID tokens');

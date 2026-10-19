@@ -28,7 +28,7 @@
     "seed-games": "tsx src/scripts/seed-games.ts",
     "seed-categories": "tsx src/scripts/seed-categories.ts",
     "seed-categories:prod": "node dist/scripts/seed-categories.js",
-    "gameid:key": "node -e \"const k=require('crypto').generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs8',format:'pem'});console.log(JSON.stringify(k).slice(1,-1))\""
+    "gameid:key": "node scripts/gameid-key.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
