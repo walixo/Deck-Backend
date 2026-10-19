@@ -325,14 +325,20 @@ transfers by hand any more.
    organisation. Without it, sellers cannot onboard and nothing is transferred.
 2. Take the secret key. `sk_sandbox_…` talks to the sandbox, `sk_live_…` to
    production — the API host is chosen from the prefix.
-3. Add a webhook endpoint with event source **all** (so Connect events such as
-   `capability.updated` arrive too), pointed at:
+3. Add **two** webhook endpoints, both pointed at:
 
    ```
    https://YOUR-API-HOST/api/payments/bachs/webhook
    ```
 
-   Copy its signing secret into `BACHS_WEBHOOK_SECRET`.
+   A Bachs endpoint listens to one event source, so:
+   - **Account events** — `Checkout Completed` and `Collection Succeeded`
+     (payments settling).
+   - **Connected account events** — `Account Updated` and `Capability Updated`
+     (sellers' and developers' sub-accounts being switched on for transfers).
+
+   Each has its own signing secret. Put both in `BACHS_WEBHOOK_SECRET`,
+   separated by a comma: `whsec_first,whsec_second`.
 
 It must point at the API host directly, **not** at the Vercel domain. The
 handler verifies Bachs's signature against the raw request body, and a proxy

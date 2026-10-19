@@ -273,8 +273,18 @@ export function verifyWebhook(
   rawBody: Buffer,
   header: (name: string) => string | undefined,
 ): BachsEvent | null {
-  const secret = env.bachs.webhookSecret;
-  if (!secret) return null;
+  /*
+   * One secret per Bachs endpoint. An endpoint listens to either the
+   * platform's own events (payments) or connected accounts' events (sub-account
+   * onboarding) — never both — so Deck registers two endpoints at the same URL,
+   * each with its own signing secret, and BACHS_WEBHOOK_SECRET holds both,
+   * separated by a comma. A delivery is genuine if any of them signed it.
+   */
+  const secrets = env.bachs.webhookSecret
+    .split(/[\s,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (secrets.length === 0) return null;
 
   const v2 = header('x-bachs-signature-v2');
   let timestamp: string | undefined;
@@ -298,17 +308,18 @@ export function verifyWebhook(
   const age = Math.abs(Date.now() / 1000 - Number(timestamp));
   if (age > WEBHOOK_TOLERANCE_SECONDS) return null;
 
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(`${timestamp}.`)
-    .update(rawBody)
-    .digest('hex');
-  const want = Buffer.from(expected, 'utf8');
-
-  const genuine = signatures.some((candidate) => {
-    const given = Buffer.from(candidate, 'utf8');
-    /* timingSafeEqual throws on a length mismatch, so check first. */
-    return given.length === want.length && crypto.timingSafeEqual(given, want);
+  const genuine = secrets.some((secret) => {
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(`${timestamp}.`)
+      .update(rawBody)
+      .digest('hex');
+    const want = Buffer.from(expected, 'utf8');
+    return signatures.some((candidate) => {
+      const given = Buffer.from(candidate, 'utf8');
+      /* timingSafeEqual throws on a length mismatch, so check first. */
+      return given.length === want.length && crypto.timingSafeEqual(given, want);
+    });
   });
   if (!genuine) return null;
 
