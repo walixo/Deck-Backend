@@ -1,6 +1,7 @@
 import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/db';
 import { env } from './config/env';
+import { assertSigningKey } from './services/gameIdKeys';
 import { startScheduler, stopScheduler } from './services/scheduler';
 
 /**
@@ -15,6 +16,8 @@ const SHUTDOWN_GRACE_MS = 8_000;
 
 async function bootstrap(): Promise<void> {
   await connectDatabase();
+  /* Reports a missing or malformed GameID key in the deploy log. */
+  assertSigningKey();
 
   const app = createApp();
 

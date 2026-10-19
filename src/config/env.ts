@@ -285,6 +285,22 @@ export const env = {
     .map((origin) => origin.trim())
     .filter(Boolean),
   /**
+   * GameID — Deck as an OAuth 2.0 / OpenID Connect provider.
+   *
+   * `issuer` is the public origin apps see in tokens and discovery; it defaults
+   * to the first client origin, since the consent page lives on the frontend.
+   * `privateKey` is an RSA private key in PEM (newlines may be written as \n)
+   * that signs ID tokens; without one, development generates a throwaway key
+   * at boot and production refuses to sign. `subjectSecret` keys the per-app
+   * subject identifiers — change it and every app sees every user as new.
+   */
+  gameId: {
+    issuer: (process.env.GAMEID_ISSUER ?? '').replace(/\/+$/, ''),
+    privateKey: (process.env.GAMEID_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+    subjectSecret: process.env.GAMEID_SUBJECT_SECRET ?? '',
+  },
+
+  /**
    * Lets game webhooks reach localhost and private addresses, over http — for
    * running Deck and a game server on one machine. Honoured only outside
    * production, whatever the variable says: in production this would reopen

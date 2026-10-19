@@ -34,6 +34,23 @@ export interface IIdentity {
   linkedAt: Date;
 }
 
+/**
+ * A player's GameID — the identity they carry to every game that offers
+ * "Sign in with GameID".
+ *
+ * `handle` is chosen, unique and changeable (rarely: see the controller).
+ * `code` is assigned once and never changes, so a friend list or a ban list
+ * that keyed on it survives a rename. Both are public by design; they are only
+ * handed to an app when the player consents to the `profile` scope. Apps that
+ * ask only for `openid` get a per-app subject instead, and learn neither.
+ */
+export interface IGameIdentity {
+  handle: string;
+  code: string;
+  handleChangedAt: Date | null;
+  createdAt: Date;
+}
+
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId;
   name: string;
@@ -50,6 +67,7 @@ export interface IUser extends Document {
   password?: string;
   identities: IIdentity[];
   payoutAccount?: IPayoutAccount;
+  gameId?: IGameIdentity;
   avatarUrl?: string;
   bio?: string;
   headline?: string;
@@ -133,6 +151,19 @@ const userSchema = new Schema<IUser>(
     verified: { type: Boolean, default: false, index: true },
     verifiedAt: { type: Date, default: null },
 
+    gameId: {
+      type: new Schema<IGameIdentity>(
+        {
+          handle: { type: String, required: true, lowercase: true, trim: true },
+          code: { type: String, required: true },
+          handleChangedAt: { type: Date, default: null },
+          createdAt: { type: Date, default: Date.now },
+        },
+        { _id: false },
+      ),
+      required: false,
+    },
+
     payoutAccount: {
       type: new Schema<IPayoutAccount>(
         {
@@ -168,6 +199,9 @@ userSchema.methods.comparePassword = async function comparePassword(
 /* Connect webhooks name the account, not the user — this is how a
    `capability.updated` finds who it belongs to. */
 userSchema.index({ 'payoutAccount.accountId': 1 }, { unique: true, sparse: true });
+/* GameIDs are unique across Deck — that is what makes them an identity. */
+userSchema.index({ 'gameId.handle': 1 }, { unique: true, sparse: true });
+userSchema.index({ 'gameId.code': 1 }, { unique: true, sparse: true });
 
 /* The lookup every social sign-in does: "which account owns this provider
    id". Unique across the collection, so one GitHub account cannot end up

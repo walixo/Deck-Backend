@@ -99,5 +99,15 @@ services:
       # Deck Games: Deck keeps this percentage of in-game purchases.
       - key: GAME_FEE_PERCENT
         value: "20"
+
+      # GameID (Deck as an OAuth/OIDC provider). Paste in the dashboard only.
+      # GAMEID_PRIVATE_KEY: RSA private key PEM, newlines written as \n.
+      - key: GAMEID_PRIVATE_KEY
+        sync: false
+      - key: GAMEID_SUBJECT_SECRET
+        generateValue: true
+      # https://onedeck.africa — the public origin apps see in tokens.
+      - key: GAMEID_ISSUER
+        sync: false
       - key: CURRENCY
         value: NGN

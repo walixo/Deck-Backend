@@ -363,6 +363,24 @@ transfer run, and developers' 80% is paid with everyone else's. Things to know:
 - Never set `GAME_WEBHOOKS_ALLOW_PRIVATE` in production — it is ignored there
   anyway, because it would let game webhooks reach internal addresses.
 
+### GameID
+
+GameID makes Deck an OAuth 2.0 / OpenID Connect provider: other developers'
+games show "Sign in with GameID". Until it has a signing key it stays switched
+off (its endpoints answer 503) — the rest of the API is unaffected.
+
+1. Generate a key: `npm run gameid:key` in the backend. It prints the PEM with
+   newlines as `\n`, ready to paste as one line.
+2. On Render set `GAMEID_PRIVATE_KEY` to that line, `GAMEID_ISSUER` to
+   `https://onedeck.africa`, and let `GAMEID_SUBJECT_SECRET` generate.
+   **Never change `GAMEID_SUBJECT_SECRET` afterwards** — every app's player IDs
+   are derived from it.
+3. `vercel.json` already rewrites `/.well-known/openid-configuration` to the
+   API, which is where OIDC libraries look.
+
+The consent page is `/gameid/authorize` on the frontend; the token, userinfo,
+revoke and JWKS endpoints are under `/api/gameid/oauth` and accept any origin.
+
 ## 5. Social sign-in (optional)
 
 Both providers are independent and both are optional: whatever has keys is

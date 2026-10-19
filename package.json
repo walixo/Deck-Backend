@@ -2,7 +2,7 @@
   "name": "deck-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "REST API for Deck — launch, share, and discover new tech items",
+  "description": "REST API for Deck \u2014 launch, share, and discover new tech items",
   "main": "dist/server.js",
   "engines": {
     "node": ">=20"
@@ -27,7 +27,8 @@
     "seed-acquisitions": "tsx src/scripts/seed-acquisitions.ts",
     "seed-games": "tsx src/scripts/seed-games.ts",
     "seed-categories": "tsx src/scripts/seed-categories.ts",
-    "seed-categories:prod": "node dist/scripts/seed-categories.js"
+    "seed-categories:prod": "node dist/scripts/seed-categories.js",
+    "gameid:key": "node -e \"const k=require('crypto').generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs8',format:'pem'});console.log(JSON.stringify(k).slice(1,-1))\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

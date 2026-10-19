@@ -65,6 +65,19 @@ export function createApp(): Application {
    * not allowed. Omitting the header produces exactly that, and leaves a
    * misconfiguration looking like a misconfiguration.
    */
+  /*
+   * GameID's public OAuth endpoints answer any origin. Other developers' games
+   * call the token and userinfo endpoints from their own pages, and nothing
+   * here uses cookies — credentials are a Bearer token or a client secret in
+   * the request itself — so an open policy hands nobody any ambient authority.
+   * Mounted before Deck's own CORS so a preflight from a stranger's origin is
+   * answered here rather than turned away there.
+   */
+  app.use(
+    '/api/gameid/oauth',
+    cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Authorization', 'Content-Type'] }),
+  );
+
   app.use(
     cors({
       origin(origin, callback) {
