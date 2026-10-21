@@ -23,7 +23,17 @@ const AUTHOR_FIELDS = 'name username avatarUrl headline verified';
  * and a game called "Developers" would otherwise sit at a URL the router
  * gives to something else. Treated as taken, so it gets a suffix instead.
  */
-const RESERVED_SLUGS = new Set(['developers', 'purchase', 'purchases', 'v1', 'mine', 'new', 'docs']);
+const RESERVED_SLUGS = new Set([
+  'developers',
+  'purchase',
+  'purchases',
+  'v1',
+  'mine',
+  'new',
+  'docs',
+  /* `/games/agents` is Agentic Games' landing page. */
+  'agents',
+]);
 
 /** The arcade. Approved games only, Deck's featured ones first. */
 export async function listGames(req: Request, res: Response): Promise<void> {
