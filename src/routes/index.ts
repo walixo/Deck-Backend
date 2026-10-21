@@ -5,6 +5,8 @@ import { asyncHandler } from '../utils/asyncHandler';
 import acquisitionRoutes from './acquisition.routes';
 import adRoutes from './ad.routes';
 import adminRoutes from './admin.routes';
+import agentApiRoutes from './agentApi.routes';
+import agentRoutes from './agent.routes';
 import authRoutes from './auth.routes';
 import commentRoutes from './comment.routes';
 import customRoutes from './custom.routes';
@@ -52,6 +54,9 @@ router.use('/games/v1', gameApiRoutes);
 /* GameID: the public OAuth endpoints first, then the Deck-side ones. */
 router.use('/gameid/oauth', gameIdOAuthRoutes);
 router.use('/gameid', gameIdRoutes);
+/* AgentID: the agent's own key-authenticated API first, then the operator's. */
+router.use('/agents/v1', agentApiRoutes);
+router.use('/agents', agentRoutes);
 router.use('/games', gameRoutes);
 router.use('/custom', customRoutes);
 router.use('/leaderboard', leaderboardRoutes);
