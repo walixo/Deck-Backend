@@ -147,7 +147,14 @@ export const env = {
    * `BACHS_API_URL` overrides that, which is only for pointing at a mock.
    */
   bachs: {
-    secretKey: process.env.BACHS_SECRET_KEY ?? '',
+    /* Trimmed, and stripped of wrapping quotes: a key pasted into a hosting
+       dashboard easily picks up a trailing newline or the quotes from a .env
+       line, and Bachs rejects the whole thing as an unknown key — with no
+       request reaching its logs to say why. */
+    secretKey: (process.env.BACHS_SECRET_KEY ?? '')
+      .trim()
+      .replace(/^(['"])(.*)\1$/, '$2')
+      .trim(),
     /* Per webhook endpoint, from the Bachs developer portal → Webhooks. The
        endpoint must have its event source set to `all` so Connect events
        (account and capability changes) arrive alongside payments. */

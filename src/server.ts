@@ -1,6 +1,7 @@
 import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/db';
 import { env } from './config/env';
+import { checkBachsKey } from './services/bachs';
 import { assertSigningKey } from './services/gameIdKeys';
 import { startScheduler, stopScheduler } from './services/scheduler';
 
@@ -29,6 +30,9 @@ async function bootstrap(): Promise<void> {
   /* Here and only here — not in createApp — so scripts and tests that build
      the app never start sweeping orders or sending transfers by accident. */
   startScheduler();
+
+  /* In the background: a slow provider must not hold up the server starting. */
+  void checkBachsKey();
 
   let closing = false;
 

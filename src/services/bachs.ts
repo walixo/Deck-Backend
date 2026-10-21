@@ -102,6 +102,41 @@ interface RequestOptions {
   idempotencyKey?: string;
 }
 
+/**
+ * What Bachs says when it refuses a request.
+ *
+ * Its errors are `{ detail, error_code }`, where `detail` is a sentence or, on
+ * a validation failure, a list of `{ loc, msg }` entries. The older
+ * `{ message }` and `{ error: { message, code } }` shapes are read too, so a
+ * change on their side degrades to a vaguer message rather than none.
+ */
+interface BachsErrorBody {
+  detail?: string | { msg?: string; loc?: (string | number)[] }[];
+  error_code?: string;
+  message?: string;
+  error?: { message?: string; code?: string };
+}
+
+export function readBachsError(body: BachsErrorBody | null): { message?: string; code?: string } {
+  if (!body) return {};
+  let message: string | undefined;
+  if (typeof body.detail === 'string') message = body.detail;
+  else if (Array.isArray(body.detail)) {
+    message = body.detail
+      .map((item) =>
+        [item.loc?.filter((part) => part !== 'body').join('.'), item.msg]
+          .filter(Boolean)
+          .join(': '),
+      )
+      .filter(Boolean)
+      .join('; ');
+  }
+  return {
+    message: message || body.error?.message || body.message || undefined,
+    code: body.error_code ?? body.error?.code,
+  };
+}
+
 async function bachsRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   if (!bachsConfigured()) {
     throw ApiError.badRequest('Payments are not configured on this server');
@@ -126,19 +161,49 @@ async function bachsRequest<T>(path: string, options: RequestOptions = {}): Prom
     throw new BachsError('We could not reach the payment provider. Please try again.', 0);
   }
 
-  const payload = (await response.json().catch(() => null)) as
-    (T & { message?: string; error?: { message?: string; code?: string } }) | null;
+  const payload = (await response.json().catch(() => null)) as (T & BachsErrorBody) | null;
 
   if (!response.ok || !payload) {
-    const message =
-      payload?.error?.message ?? payload?.message ?? 'The payment provider rejected that request';
-    /* Logged with the code, surfaced without it: the code is for us. */
+    const { message: said, code } = readBachsError(payload);
+    /* Logged in full — status, code and Bachs's own words — so the cause is in
+       our logs; what the person sees is decided below. */
     // eslint-disable-next-line no-console
-    console.error('[bachs]', response.status, path, payload?.error?.code ?? '', message);
-    throw new BachsError(message, response.status, payload?.error?.code);
+    console.error('[bachs]', response.status, path, code ?? '', said ?? '(no message)');
+
+    /* 401 and 403 are about Deck's own credentials, not anything the person
+       sent: showing them "Invalid API key" would be wrong and alarming. */
+    const message =
+      response.status === 401 || response.status === 403
+        ? 'Payments are temporarily unavailable on our side. Nothing you did caused this — please try again later.'
+        : (said ?? 'The payment provider rejected that request');
+    throw new BachsError(message, response.status, code);
   }
 
   return payload;
+}
+
+/**
+ * Checks the key once at boot, with a read that changes nothing.
+ *
+ * A wrong key otherwise stays silent until the first seller tries to set up
+ * payouts or a buyer reaches checkout. This puts the answer in the logs the
+ * moment the server starts — accepted, or rejected and why. Never throws: a
+ * bad key must not stop the rest of Deck from running.
+ */
+export async function checkBachsKey(): Promise<void> {
+  if (!bachsConfigured()) return;
+  const mode = env.bachs.secretKey.startsWith('sk_sandbox_') ? 'sandbox' : 'live';
+  try {
+    await bachsRequest('/v1/balances');
+    // eslint-disable-next-line no-console
+    console.log(`[bachs] ${mode} key accepted`);
+  } catch (error) {
+    const status = error instanceof BachsError ? error.providerStatus : 0;
+    // eslint-disable-next-line no-console
+    console.error(
+      `[bachs] ${mode} key check failed (${status || 'unreachable'}) — payments and payouts will fail until BACHS_SECRET_KEY is fixed`,
+    );
+  }
 }
 
 /* -------------------------------------------------------------- checkout --- */
