@@ -31,7 +31,7 @@ const RESERVED_SLUGS = new Set([
   'mine',
   'new',
   'docs',
-  /* `/games/agents` is Agentic Games' landing page. */
+  /* `/games/agents` is Deck Circuit's landing page. */
   'agents',
 ]);
 
