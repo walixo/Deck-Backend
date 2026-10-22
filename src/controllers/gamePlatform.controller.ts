@@ -18,6 +18,7 @@ import {
   purchaseReference,
 } from '../services/gameKeys';
 import { assertDeliverable, deliverPurchase, post } from '../services/gameWebhooks';
+import { seatFor } from '../services/rooms';
 import { applyGameFee } from '../services/money';
 import { formatMinor, notify } from '../services/notify';
 import { toGameResponse } from '../serializers';
@@ -51,7 +52,7 @@ const AUTHOR_FIELDS = 'name username avatarUrl headline verified';
 
 /* ------------------------------------------------------------ helpers --- */
 
-async function findGame(slug: string, withSecret = false): Promise<IGame> {
+export async function findGame(slug: string, withSecret = false): Promise<IGame> {
   const query = Game.findOne({ slug });
   if (withSecret) query.select('+webhookSecret');
   const game = await query;
@@ -59,7 +60,7 @@ async function findGame(slug: string, withSecret = false): Promise<IGame> {
   return game;
 }
 
-function canDevelop(user: IUser | undefined, game: IGame): boolean {
+export function canDevelop(user: IUser | undefined, game: IGame): boolean {
   if (!user) return false;
   return user.role === 'admin' || Boolean(game.author?.equals(user._id));
 }
@@ -75,7 +76,7 @@ function assertDeveloper(req: Request, game: IGame): void {
  * before review — so a developer can build against a game nobody else can
  * see. Live is for everyone, and only once the game is approved.
  */
-function resolveMode(req: Request, game: IGame, requested?: GameKeyMode): GameKeyMode {
+export function resolveMode(req: Request, game: IGame, requested?: GameKeyMode): GameKeyMode {
   const developer = canDevelop(req.user, game);
   const mode: GameKeyMode = requested ?? (game.status === 'approved' ? 'live' : 'test');
 
@@ -95,7 +96,7 @@ function resolveMode(req: Request, game: IGame, requested?: GameKeyMode): GameKe
  * Two tabs asking at the same moment can both miss the lookup; the unique
  * index lets exactly one insert win and the other reads what it wrote.
  */
-async function playerIdFor(game: IGame, user: IUser, mode: GameKeyMode): Promise<string> {
+export async function playerIdFor(game: IGame, user: IUser, mode: GameKeyMode): Promise<string> {
   const existing = await GamePlayer.findOne({ game: game._id, user: user._id, mode });
   if (existing) return existing.playerId;
 
@@ -229,7 +230,7 @@ export async function listProducts(req: Request, res: Response): Promise<void> {
  * one its own server got back from Deck.
  */
 export async function createSession(req: Request, res: Response): Promise<void> {
-  const { mode: requested } = req.body as SessionInput;
+  const { mode: requested, seat } = req.body as SessionInput;
   const game = await findGame(req.params.slug);
   if (game.kind !== 'external' || !game.sdk) {
     throw ApiError.badRequest('This game does not use the Deck Games SDK');
@@ -237,7 +238,8 @@ export async function createSession(req: Request, res: Response): Promise<void> 
 
   const mode = resolveMode(req, game, requested);
   const user = req.user!;
-  const playerId = await playerIdFor(game, user, mode);
+  /* A sandbox seat is its own test player, verifiable like any other. */
+  const { playerId, displayName } = await seatFor(req, game, mode, seat);
   const token = mintSessionToken();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
@@ -252,7 +254,7 @@ export async function createSession(req: Request, res: Response): Promise<void> 
 
   res.status(201).json({
     success: true,
-    data: { token, playerId, displayName: user.name, mode, expiresAt },
+    data: { token, playerId, displayName, mode, expiresAt },
   });
 }
 
@@ -451,6 +453,11 @@ export async function getDeveloperView(req: Request, res: Response): Promise<voi
         testUrl: game.testUrl,
         webhookUrl: game.webhookUrl,
         hasWebhookSecret: Boolean(game.webhookSecret),
+        multiplayer: {
+          enabled: game.multiplayer?.enabled ?? false,
+          minPlayers: game.multiplayer?.minPlayers ?? 2,
+          maxPlayers: game.multiplayer?.maxPlayers ?? 4,
+        },
         keys: {
           test: game.keys?.test
             ? { hint: game.keys.test.hint, createdAt: game.keys.test.createdAt }
@@ -492,6 +499,7 @@ export async function updateDeveloperSettings(req: Request, res: Response): Prom
   if (input.studio !== undefined) game.studio = input.studio;
   if (input.testUrl !== undefined) game.testUrl = input.testUrl;
   if (input.webhookUrl !== undefined) game.webhookUrl = input.webhookUrl;
+  if (input.multiplayer !== undefined) game.multiplayer = input.multiplayer;
   await game.save();
 
   res.json({ success: true, data: { updated: Object.keys(input) } });

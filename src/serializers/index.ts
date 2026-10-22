@@ -464,6 +464,11 @@ export function toGameSummary(game: IGame) {
     orientation: game.orientation ?? 'landscape',
     sdk: game.sdk ?? false,
     studio: game.studio ?? '',
+    multiplayer: {
+      enabled: game.multiplayer?.enabled ?? false,
+      minPlayers: game.multiplayer?.minPlayers ?? 2,
+      maxPlayers: game.multiplayer?.maxPlayers ?? 4,
+    },
     createdAt: game.createdAt,
     author: isPopulatedUser(author) ? toPublicUser(author) : null,
   };

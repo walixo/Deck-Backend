@@ -31,6 +31,23 @@ export type GameOrientation = (typeof GAME_ORIENTATIONS)[number];
 
 export type GameKeyMode = 'test' | 'live';
 
+/** Room sizes a game may ask for. Two is the least a "multi" can mean. */
+export const MULTIPLAYER_MIN = 2;
+export const MULTIPLAYER_MAX = 16;
+
+/**
+ * Whether a game plays with other people through Deck, and how many.
+ *
+ * Off by default: a single-player game should never see a lobby. When on,
+ * the game can create, join and quick-match rooms through the SDK, and Deck
+ * relays messages between the players in a room.
+ */
+export interface GameMultiplayer {
+  enabled: boolean;
+  minPlayers: number;
+  maxPlayers: number;
+}
+
 /**
  * A developer API key, stored as a hash. The key itself is shown once, at the
  * moment it is minted, and never again — the same rule as a password. `hint`
@@ -99,6 +116,7 @@ export interface IGame extends Document {
   /** HMAC key for those events. Excluded from every query by default. */
   webhookSecret: string;
   keys: { test: GameKey | null; live: GameKey | null };
+  multiplayer: GameMultiplayer;
 
   createdAt: Date;
   updatedAt: Date;
@@ -142,6 +160,11 @@ const gameSchema = new Schema<IGame>(
     keys: {
       test: { type: keySchema, default: null },
       live: { type: keySchema, default: null },
+    },
+    multiplayer: {
+      enabled: { type: Boolean, default: false },
+      minPlayers: { type: Number, default: 2, min: MULTIPLAYER_MIN, max: MULTIPLAYER_MAX },
+      maxPlayers: { type: Number, default: 4, min: MULTIPLAYER_MIN, max: MULTIPLAYER_MAX },
     },
   },
   { timestamps: true },

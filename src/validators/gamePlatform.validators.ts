@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { env } from '../config/env';
-import { GAME_ORIENTATIONS } from '../models/Game';
+import { GAME_ORIENTATIONS, MULTIPLAYER_MAX, MULTIPLAYER_MIN } from '../models/Game';
 import { PRODUCT_TYPES } from '../models/GameProduct';
 import { testUrlField } from './game.validators';
 import { urlField } from './fields';
@@ -16,7 +16,13 @@ import { urlField } from './fields';
 
 const mode = z.enum(['test', 'live']);
 
-export const sessionSchema = z.object({ mode: mode.optional() }).strict();
+export const sessionSchema = z
+  .object({
+    mode: mode.optional(),
+    /* A sandbox seat (test mode, developer only) — see services/rooms. */
+    seat: z.number().int().min(0).max(15).optional(),
+  })
+  .strict();
 
 export const purchaseSchema = z
   .object({
@@ -40,6 +46,14 @@ export const developerSettingsSchema = z
         'Webhook URLs must use https',
       )
       .nullable(),
+    multiplayer: z
+      .object({
+        enabled: z.boolean(),
+        minPlayers: z.number().int().min(MULTIPLAYER_MIN).max(MULTIPLAYER_MAX),
+        maxPlayers: z.number().int().min(MULTIPLAYER_MIN).max(MULTIPLAYER_MAX),
+      })
+      .strict()
+      .refine((m) => m.minPlayers <= m.maxPlayers, 'The minimum cannot be more than the maximum'),
   })
   .partial()
   .strict();

@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import {
   deliverGamePurchase,
+  endApiRoom,
+  getApiRoom,
   getGamePurchase,
   listGameProducts,
   listPlayerPurchases,
   requireGameKey,
+  sendApiRoomMessage,
+  setApiRoomState,
   verifySession,
   whoAmI,
 } from '../controllers/gameApi.controller';
@@ -15,6 +19,11 @@ import {
   playerPurchasesQuerySchema,
   verifySessionSchema,
 } from '../validators/gamePlatform.validators';
+import {
+  endRoomSchema,
+  serverMessageSchema,
+  serverStateSchema,
+} from '../validators/room.validators';
 
 /**
  * The server API for game developers, `/api/games/v1`. Every route needs a
@@ -37,5 +46,15 @@ router.get(
   validate(playerPurchasesQuerySchema, 'query'),
   asyncHandler(listPlayerPurchases),
 );
+
+/* Multiplayer rooms: read one, drive it, end it with results. */
+router.get('/rooms/:roomId', asyncHandler(getApiRoom));
+router.post('/rooms/:roomId/state', validate(serverStateSchema), asyncHandler(setApiRoomState));
+router.post(
+  '/rooms/:roomId/messages',
+  validate(serverMessageSchema),
+  asyncHandler(sendApiRoomMessage),
+);
+router.post('/rooms/:roomId/end', validate(endRoomSchema), asyncHandler(endApiRoom));
 
 export default router;

@@ -3,10 +3,19 @@ import { Game, type GameKeyMode, type IGame } from '../models/Game';
 import { GameProduct } from '../models/GameProduct';
 import { GamePurchase } from '../models/GamePurchase';
 import { GameSession } from '../models/GameSession';
+import { GameRoom, ROOM_STATE_MAX_BYTES, type IGameRoom } from '../models/GameRoom';
+import { Score } from '../models/Score';
 import { User } from '../models/User';
 import { hashSecret, modeOfKey } from '../services/gameKeys';
+import { publish } from '../services/roomHub';
+import { activeUntil, endRoom, toRoomResponse } from '../services/rooms';
 import { ApiError } from '../utils/ApiError';
 import type { PlayerPurchasesQuery } from '../validators/gamePlatform.validators';
+import type {
+  EndRoomInput,
+  ServerMessageInput,
+  ServerStateInput,
+} from '../validators/room.validators';
 import { toProductResponse, toPurchaseResponse } from './gamePlatform.controller';
 
 /**
@@ -155,4 +164,116 @@ export async function listPlayerPurchases(req: Request, res: Response): Promise<
 
   const purchases = await GamePurchase.find(filter).sort({ createdAt: -1 }).limit(200);
   res.json({ success: true, data: purchases.map(toPurchaseResponse) });
+}
+
+/* ------------------------------------------------------------- rooms --- */
+
+/** A room of this game, in this key's mode — or 404, whichever it is not. */
+async function apiRoom(req: Request): Promise<IGameRoom> {
+  const room = await GameRoom.findOne({
+    roomId: String(req.params.roomId),
+    game: req.game!._id,
+    mode: req.gameMode,
+  });
+  if (!room) throw ApiError.notFound('No room with that id for this key');
+  return room;
+}
+
+/**
+ * A room as Deck sees it: who is in it, who hosts, its status and state.
+ *
+ * The call that lets a game's own server trust a room — check a player is
+ * really in it before letting them act, whatever their browser claims.
+ */
+export async function getApiRoom(req: Request, res: Response): Promise<void> {
+  res.json({ success: true, data: toRoomResponse(await apiRoom(req)) });
+}
+
+/** Authoritative shared state from the game's server, sent to every player. */
+export async function setApiRoomState(req: Request, res: Response): Promise<void> {
+  const { state } = req.body as ServerStateInput;
+  const room = await apiRoom(req);
+  if (room.status === 'ended') throw ApiError.conflict('This room has ended');
+  if (JSON.stringify(state ?? null).length > ROOM_STATE_MAX_BYTES) {
+    throw ApiError.badRequest('Room state is limited to 16 KB');
+  }
+  room.state = state ?? null;
+  room.markModified('state');
+  room.expiresAt = activeUntil();
+  await room.save();
+  publish(room.roomId, 'state', { state: room.state, from: 'server' });
+  res.json({ success: true, data: toRoomResponse(room) });
+}
+
+/** A message from the game's server, to everyone or to one player. */
+export async function sendApiRoomMessage(req: Request, res: Response): Promise<void> {
+  const { to, data } = req.body as ServerMessageInput;
+  const room = await apiRoom(req);
+  if (room.status === 'ended') throw ApiError.conflict('This room has ended');
+  if (JSON.stringify(data ?? null).length > 4 * 1024) {
+    throw ApiError.badRequest('Messages are limited to 4 KB');
+  }
+  const everyone = room.players.map((p) => p.playerId);
+  let recipients: string[] = everyone;
+  if (to === 'host') recipients = [room.hostPlayerId];
+  else if (to !== 'all' && to !== 'others') {
+    if (!everyone.includes(to)) throw ApiError.badRequest('That player is not in this room');
+    recipients = [to];
+  }
+  const delivered = publish(
+    room.roomId,
+    'message',
+    { from: 'server', data: data ?? null, at: Date.now() },
+    recipients,
+  );
+  res.json({ success: true, data: { delivered } });
+}
+
+/**
+ * Ends a room with its results.
+ *
+ * The only way ranked results enter Deck: from the game's server, not from a
+ * browser. In live mode, any result with a score also goes on the game's
+ * leaderboard, kept as the player's best — the same rule as a submitted score,
+ * but from a source that can be trusted.
+ */
+export async function endApiRoom(req: Request, res: Response): Promise<void> {
+  const { results } = req.body as EndRoomInput;
+  const room = await apiRoom(req);
+  if (room.status === 'ended') throw ApiError.conflict('This room has already ended');
+
+  const byPlayer = new Map(room.players.map((p) => [p.playerId, p]));
+  for (const result of results) {
+    if (!byPlayer.has(result.playerId)) {
+      throw ApiError.badRequest(`${result.playerId} is not in this room`);
+    }
+  }
+
+  const ended = await endRoom(
+    room,
+    results.map((r) => ({ playerId: r.playerId, rank: r.rank, score: r.score ?? null })),
+  );
+
+  if (room.mode === 'live') {
+    await Promise.all(
+      results
+        .filter((r) => r.score !== undefined)
+        .map(async (r) => {
+          const user = byPlayer.get(r.playerId)!.user;
+          const existing = await Score.findOne({ game: room.game, user }).select('score');
+          const improved = !existing || r.score! > existing.score;
+          await Score.updateOne(
+            { game: room.game, user },
+            {
+              $max: { score: r.score! },
+              ...(improved ? { $set: { achievedAt: new Date() } } : {}),
+              $setOnInsert: { game: room.game, user },
+            },
+            { upsert: true },
+          );
+        }),
+    );
+  }
+
+  res.json({ success: true, data: toRoomResponse(ended) });
 }

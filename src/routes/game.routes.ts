@@ -26,6 +26,19 @@ import {
   updateDeveloperSettings,
   updateProduct,
 } from '../controllers/gamePlatform.controller';
+import {
+  createRoom,
+  endRoomByHost,
+  getRoom,
+  joinRoom,
+  leaveRoom,
+  quickMatch,
+  sendMessage,
+  setReady,
+  setState,
+  startRoom,
+  streamRoom,
+} from '../controllers/room.controller';
 import { optionalAuth, requireAuth } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
@@ -41,6 +54,16 @@ import {
   sessionSchema,
   updateProductSchema,
 } from '../validators/gamePlatform.validators';
+import {
+  createRoomSchema,
+  joinRoomSchema,
+  quickMatchSchema,
+  readySchema,
+  roomMessageSchema,
+  roomStateSchema,
+  seatOnlySchema,
+  seatQuerySchema,
+} from '../validators/room.validators';
 import { submitScoreSchema } from '../validators/score.validators';
 
 const router = Router();
@@ -115,6 +138,57 @@ router.get(
   asyncHandler(requireAuth),
   validate(modeQuerySchema, 'query'),
   asyncHandler(listEntitlements),
+);
+
+/*
+ * Multiplayer rooms, from the player's side — called by the Deck page hosting
+ * the game. Making and joining rooms shares the player limiter; messages have
+ * their own per-player budget inside the hub, because a game sends many.
+ */
+const auth = asyncHandler(requireAuth);
+router.post(
+  '/:slug/rooms',
+  playerLimiter,
+  auth,
+  validate(createRoomSchema),
+  asyncHandler(createRoom),
+);
+router.post(
+  '/:slug/rooms/join',
+  playerLimiter,
+  auth,
+  validate(joinRoomSchema),
+  asyncHandler(joinRoom),
+);
+router.post(
+  '/:slug/rooms/quickmatch',
+  playerLimiter,
+  auth,
+  validate(quickMatchSchema),
+  asyncHandler(quickMatch),
+);
+router.get('/:slug/rooms/:roomId', auth, validate(seatQuerySchema, 'query'), asyncHandler(getRoom));
+router.get(
+  '/:slug/rooms/:roomId/stream',
+  auth,
+  validate(seatQuerySchema, 'query'),
+  asyncHandler(streamRoom),
+);
+router.post('/:slug/rooms/:roomId/ready', auth, validate(readySchema), asyncHandler(setReady));
+router.post('/:slug/rooms/:roomId/start', auth, validate(seatOnlySchema), asyncHandler(startRoom));
+router.post(
+  '/:slug/rooms/:roomId/messages',
+  auth,
+  validate(roomMessageSchema),
+  asyncHandler(sendMessage),
+);
+router.post('/:slug/rooms/:roomId/state', auth, validate(roomStateSchema), asyncHandler(setState));
+router.post('/:slug/rooms/:roomId/leave', auth, validate(seatOnlySchema), asyncHandler(leaveRoom));
+router.post(
+  '/:slug/rooms/:roomId/end',
+  auth,
+  validate(seatOnlySchema),
+  asyncHandler(endRoomByHost),
 );
 
 /* The developer's dashboard. Each handler checks the caller owns the game. */
