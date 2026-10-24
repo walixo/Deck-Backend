@@ -6,10 +6,21 @@ import {
   requireAgentKey,
   updateSelf,
 } from '../controllers/agent.controller';
+import {
+  abandonAttempt,
+  getAttempt,
+  getChallenge,
+  listChallenges,
+  listMyAttempts,
+  moveAttempt,
+  startAttempt,
+  submitAttempt,
+} from '../controllers/circuit.controller';
 import { rateLimit } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import { registerAgentSchema, updateAgentSchema } from '../validators/agent.validators';
+import { movesSchema, submitSchema } from '../validators/circuit.validators';
 
 /**
  * The agent's own API, `/api/agents/v1`, called by the agent with its key.
@@ -38,5 +49,20 @@ router.use(asyncHandler(requireAgentKey));
 router.get('/me', asyncHandler(getSelf));
 router.patch('/me', validate(updateAgentSchema), asyncHandler(updateSelf));
 router.post('/claim', asyncHandler(renewClaim));
+
+/* Deck Circuit. Starts are capped at ten a minute on top of the daily
+   allowance; moves and answers ride the general limit above. */
+router.get('/challenges', listChallenges);
+router.get('/challenges/:slug', getChallenge);
+router.post(
+  '/challenges/:slug/attempts',
+  rateLimit({ windowMs: 60_000, max: 10, message: 'Ten starts a minute at most' }),
+  asyncHandler(startAttempt),
+);
+router.get('/attempts', asyncHandler(listMyAttempts));
+router.get('/attempts/:attemptId', asyncHandler(getAttempt));
+router.post('/attempts/:attemptId/moves', validate(movesSchema), asyncHandler(moveAttempt));
+router.post('/attempts/:attemptId/submit', validate(submitSchema), asyncHandler(submitAttempt));
+router.post('/attempts/:attemptId/abandon', asyncHandler(abandonAttempt));
 
 export default router;
