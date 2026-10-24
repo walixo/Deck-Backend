@@ -5,6 +5,8 @@ import {
   listGames,
   listMyGames,
   listScores,
+  activePlayers,
+  heartbeat,
   recordPlay,
   submitGame,
   submitScore,
@@ -78,6 +80,8 @@ router.get('/mine', asyncHandler(requireAuth), asyncHandler(listMyGames));
 
 /* optionalAuth: a signed-out reader is the normal case, but the handler needs
    to know whether the viewer is the author or staff to show an unapproved one. */
+/* Before `/:slug`, so "players" is never read as a game. */
+router.get('/players', asyncHandler(activePlayers));
 router.get('/:slug', asyncHandler(optionalAuth), asyncHandler(getGame));
 
 router.post('/', asyncHandler(requireAuth), validate(submitGameSchema), asyncHandler(submitGame));
@@ -93,7 +97,13 @@ router.delete('/:slug', asyncHandler(requireAuth), asyncHandler(deleteGame));
 
 /* Unauthenticated on purpose: a play is a play whether or not somebody has an
    account, and requiring one would make the counter measure sign-ins instead. */
-router.post('/:slug/play', asyncHandler(recordPlay));
+router.post('/:slug/play', asyncHandler(optionalAuth), asyncHandler(recordPlay));
+router.post(
+  '/:slug/presence',
+  rateLimit({ windowMs: 60_000, max: 6, message: 'Too many heartbeats' }),
+  asyncHandler(requireAuth),
+  asyncHandler(heartbeat),
+);
 
 /* The leaderboard is public to read — one nobody can see without an account is
    not a leaderboard. optionalAuth so a signed-in reader also gets their own

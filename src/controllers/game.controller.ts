@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { Game } from '../models/Game';
+import { GamePresence, PLAYING_NOW_MS } from '../models/GamePresence';
+import type { IUser } from '../models/User';
 import { Score } from '../models/Score';
 import { toGameResponse, toGameSummary, toScoreResponse } from '../serializers';
 import { audit } from '../services/audit';
@@ -282,7 +284,66 @@ export async function recordPlay(req: Request, res: Response): Promise<void> {
   );
   if (!game) throw ApiError.notFound('We could not find that game');
 
+  /* A signed-in player also shows up as playing; anyone else only counts. */
+  if (req.user) await markPresent(req.user._id, game._id);
+
   res.json({ success: true, data: { plays: game.plays } });
+}
+
+function markPresent(user: mongoose.Types.ObjectId, game: mongoose.Types.ObjectId) {
+  return GamePresence.updateOne(
+    { user },
+    { $set: { game, lastSeenAt: new Date() } },
+    { upsert: true },
+  );
+}
+
+/** The player page's heartbeat while a game runs, so "playing now" stays true. */
+export async function heartbeat(req: Request, res: Response): Promise<void> {
+  const game = await Game.findOne({ slug: req.params.slug, status: 'approved' }).select('_id');
+  if (!game) throw ApiError.notFound('We could not find that game');
+  await markPresent(req.user!._id, game._id);
+  res.json({ success: true, data: { ok: true } });
+}
+
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Who has been playing: how many right now, how many this week, and the most
+ * recent players by GameID handle.
+ *
+ * Only people with a GameID are named — the handle is the public face they
+ * chose for games. Everyone else is counted and not listed.
+ */
+export async function activePlayers(_req: Request, res: Response): Promise<void> {
+  const now = Date.now();
+  const [playingNow, thisWeek, recent] = await Promise.all([
+    GamePresence.countDocuments({ lastSeenAt: { $gt: new Date(now - PLAYING_NOW_MS) } }),
+    GamePresence.countDocuments({ lastSeenAt: { $gt: new Date(now - WEEK_MS) } }),
+    GamePresence.find({ lastSeenAt: { $gt: new Date(now - WEEK_MS) } })
+      .sort({ lastSeenAt: -1 })
+      .limit(120)
+      .populate('user', 'gameId avatarUrl')
+      .populate('game', 'slug title status'),
+  ]);
+
+  const players = recent
+    .map((row) => {
+      const user = row.user as unknown as IUser | null;
+      const game = row.game as unknown as { slug: string; title: string; status: string } | null;
+      if (!user?.gameId?.handle || !game || game.status !== 'approved') return null;
+      return {
+        handle: user.gameId.handle,
+        avatarUrl: user.avatarUrl ?? null,
+        game: { slug: game.slug, title: game.title },
+        lastSeenAt: row.lastSeenAt,
+        playingNow: now - row.lastSeenAt.getTime() < PLAYING_NOW_MS,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 60);
+
+  res.json({ success: true, data: { playingNow, thisWeek, players } });
 }
 
 /** How many places the board shows. Ten is a leaderboard; fifty is a phone book. */
