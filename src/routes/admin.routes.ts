@@ -9,30 +9,20 @@ import {
   updateUserRole,
   setUserVerified,
 } from '../controllers/admin.controller';
-import {
-  createCategory,
-  deleteCategory,
-  updateCategory,
-} from '../controllers/category.controller';
-import {
-  listFundraiseApplications,
-  reviewFundraise,
-} from '../controllers/fundraise.controller';
+import { createCategory, deleteCategory, updateCategory } from '../controllers/category.controller';
+import { listFundraiseApplications, reviewFundraise } from '../controllers/fundraise.controller';
 import {
   listAcquisitionApplications,
   reviewAcquisition,
 } from '../controllers/acquisition.controller';
 import { listCustomQueue, reviewCustomDesign } from '../controllers/custom.controller';
 import { rescheduleItem, setFutureGen } from '../controllers/item.controller';
-import {
-  createPost,
-  deletePost,
-  listAllPosts,
-  updatePost,
-} from '../controllers/post.controller';
+import { createPost, deletePost, listAllPosts, updatePost } from '../controllers/post.controller';
 import { listAllGames, reviewGame } from '../controllers/game.controller';
 import { requireAuth } from '../middleware/auth';
 import { requireAdmin } from '../middleware/requireAdmin';
+import { listAgentGamesForReview, reviewAgentGame } from '../controllers/agentGame.controller';
+import { reviewAgentGameSchema } from '../validators/agentGame.validators';
 import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import {
@@ -43,10 +33,7 @@ import {
   updateRoleSchema,
   verifyUserSchema,
 } from '../validators/admin.validators';
-import {
-  createCategorySchema,
-  updateCategorySchema,
-} from '../validators/category.validators';
+import { createCategorySchema, updateCategorySchema } from '../validators/category.validators';
 import { reviewFundraiseSchema } from '../validators/fundraise.validators';
 import { reviewAcquisitionSchema } from '../validators/acquisition.validators';
 import { reviewCustomDesignSchema } from '../validators/custom.validators';
@@ -64,11 +51,7 @@ router.get('/overview', asyncHandler(getOverview));
 
 router.get('/users', validate(listUsersSchema, 'query'), asyncHandler(listUsers));
 router.patch('/users/:id/role', validate(updateRoleSchema), asyncHandler(updateUserRole));
-router.patch(
-  '/users/:id/verify',
-  validate(verifyUserSchema),
-  asyncHandler(setUserVerified),
-);
+router.patch('/users/:id/verify', validate(verifyUserSchema), asyncHandler(setUserVerified));
 
 router.get('/orders', validate(listOrdersSchema, 'query'), asyncHandler(listAllOrders));
 router.patch(
@@ -79,19 +62,11 @@ router.patch(
 
 /* Lives here rather than on /api/items because it is not an edit: it decides
    which daily board a launch competes on, and can rewrite a finished one. */
-router.patch(
-  '/items/:id/schedule',
-  validate(rescheduleItemSchema),
-  asyncHandler(rescheduleItem),
-);
+router.patch('/items/:id/schedule', validate(rescheduleItemSchema), asyncHandler(rescheduleItem));
 
 /* Future Gen membership. Staff-curated for the same reason fundraises are
    staff-approved: the page ends in strangers sending money to teenagers. */
-router.patch(
-  '/items/:id/future-gen',
-  validate(setFutureGenSchema),
-  asyncHandler(setFutureGen),
-);
+router.patch('/items/:id/future-gen', validate(setFutureGenSchema), asyncHandler(setFutureGen));
 
 /* Categories are staff-managed: they decide the shape of the whole board, and
    a slug typo becomes a broken filter URL for everyone. */
@@ -118,16 +93,18 @@ router.patch(
 );
 
 router.get('/fundraises', asyncHandler(listFundraiseApplications));
-router.patch(
-  '/fundraises/:slug',
-  validate(reviewFundraiseSchema),
-  asyncHandler(reviewFundraise),
-);
+router.patch('/fundraises/:slug', validate(reviewFundraiseSchema), asyncHandler(reviewFundraise));
 
 /* The arcade's review queue. Approving a game puts somebody else's page one
    click from Deck's, so it goes through the same gate as everything else that
    leaves the building. */
 router.get('/games', asyncHandler(listAllGames));
+router.get('/agent-games', asyncHandler(listAgentGamesForReview));
+router.patch(
+  '/agent-games/:slug/review',
+  validate(reviewAgentGameSchema),
+  asyncHandler(reviewAgentGame),
+);
 router.patch('/games/:id/review', validate(reviewGameSchema), asyncHandler(reviewGame));
 
 router.get('/posts', asyncHandler(listAllPosts));

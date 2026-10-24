@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { Agent, type IAgent } from '../models/Agent';
+import { AgentGame, type IAgentGame } from '../models/AgentGame';
 import { Attempt, ATTEMPTS_PER_DAY, type IAttempt } from '../models/Attempt';
 import type { IUser } from '../models/User';
 import {
@@ -10,6 +11,8 @@ import {
   toChallengeInfo,
   type Challenge,
 } from '../services/circuit';
+import { communityChallenge, type Version } from '../services/circuit/community';
+import { ChallengeError } from '../services/circuit/community/protocol';
 import { ApiError } from '../utils/ApiError';
 import type { MovesInput, SubmitInput } from '../validators/circuit.validators';
 
@@ -22,11 +25,67 @@ import type { MovesInput, SubmitInput } from '../validators/circuit.validators';
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Practice runs at community games get more room: developers iterate. */
+const TEST_ATTEMPTS_PER_DAY = 200;
 
-function challengeOr404(slug: string): Challenge {
-  const challenge = findChallenge(slug);
-  if (!challenge) throw ApiError.notFound('No challenge with that name');
-  return challenge;
+const loadGame = (slug: string) =>
+  AgentGame.findOne({ slug }).select('+signingSecret').populate('owner', 'gameId');
+
+/* Owners arrive populated or as bare IDs depending on the query; compare IDs. */
+const idOf = (ref: unknown) => String((ref as { _id?: unknown } | null)?._id ?? ref);
+
+const ownsGame = (agent: IAgent | undefined, game: IAgentGame) =>
+  Boolean(agent?.owner && game.owner && idOf(game.owner) === idOf(agent.owner));
+
+/** A community game's failure, said plainly — and never a 500. */
+function challengeFailed(error: unknown): never {
+  if (error instanceof ChallengeError) {
+    throw new ApiError(502, `The challenge did not answer correctly: ${error.message}`);
+  }
+  throw error;
+}
+
+/** A challenge anyone may read: built-in, or a community game that is approved. */
+async function publicChallenge(slug: string): Promise<Challenge> {
+  const builtIn = findChallenge(slug);
+  if (builtIn) return builtIn;
+  const game = await loadGame(slug);
+  if (!game?.live || game.status === 'retired')
+    throw ApiError.notFound('No challenge with that name');
+  return communityChallenge(game, 'live');
+}
+
+/**
+ * What this agent plays at this slug. Built-ins are the same for everyone.
+ * A community game's approved version is for everyone; its operator's own
+ * agents play the draft instead, as practice that never reaches a board.
+ */
+async function challengeForAgent(
+  slug: string,
+  agent: IAgent,
+): Promise<{ challenge: Challenge; test: boolean; version: Version | null }> {
+  const builtIn = findChallenge(slug);
+  if (builtIn) return { challenge: builtIn, test: false, version: null };
+  const game = await loadGame(slug);
+  if (!game || game.status === 'retired') throw ApiError.notFound('No challenge with that name');
+  if (ownsGame(agent, game)) {
+    return { challenge: communityChallenge(game, 'draft'), test: true, version: 'draft' };
+  }
+  if (!game.live) throw ApiError.notFound('No challenge with that name');
+  return { challenge: communityChallenge(game, 'live'), test: false, version: 'live' };
+}
+
+/** The challenge an existing attempt was started on, in the version it used. */
+async function challengeForAttempt(attempt: IAttempt): Promise<Challenge> {
+  const builtIn = findChallenge(attempt.challenge);
+  if (builtIn) return builtIn;
+  const game = await loadGame(attempt.challenge);
+  if (!game) throw ApiError.notFound('That challenge no longer exists');
+  try {
+    return communityChallenge(game, attempt.version ?? 'live');
+  } catch (error) {
+    return challengeFailed(error);
+  }
 }
 
 function playingAgent(req: Request): IAgent {
@@ -38,14 +97,14 @@ function playingAgent(req: Request): IAgent {
 }
 
 function toAttempt(attempt: IAttempt) {
-  const challenge = findChallenge(attempt.challenge)!;
   return {
     attemptId: attempt.attemptId,
     challenge: attempt.challenge,
     status: attempt.status,
     startedAt: attempt.startedAt,
     deadline: attempt.deadline,
-    limitMs: challenge.limitMs,
+    limitMs: attempt.limitMs ?? findChallenge(attempt.challenge)?.limitMs ?? null,
+    test: attempt.test ?? false,
     finishedAt: attempt.finishedAt,
     quality: attempt.quality,
     points: attempt.points,
@@ -116,12 +175,40 @@ async function finish(
 
 /* ------------------------------------------------------------ public --- */
 
-export function listChallenges(_req: Request, res: Response): void {
-  res.json({ success: true, data: CHALLENGES.map(toChallengeInfo) });
+/**
+ * The built-in challenges and every approved community one. Called with an
+ * agent key, it adds the drafts the agent's operator is building, marked as
+ * practice.
+ */
+export async function listChallenges(req: Request, res: Response): Promise<void> {
+  const approved = await AgentGame.find({ status: { $ne: 'retired' }, live: { $ne: null } })
+    .select('+signingSecret')
+    .populate('owner', 'gameId')
+    .sort({ reviewedAt: 1 });
+  const community = approved.map((game) => ({
+    ...toChallengeInfo(communityChallenge(game, 'live')),
+    community: true,
+  }));
+  const owner = req.agent?.owner;
+  const drafts = owner
+    ? await AgentGame.find({ owner, status: { $ne: 'retired' } })
+        .select('+signingSecret')
+        .populate('owner', 'gameId')
+    : [];
+  const practice = drafts.map((game) => ({
+    ...toChallengeInfo(communityChallenge(game, 'draft')),
+    community: true,
+    practice: true,
+    status: game.status,
+  }));
+  res.json({
+    success: true,
+    data: [...CHALLENGES.map(toChallengeInfo), ...community, ...practice],
+  });
 }
 
-export function getChallenge(req: Request, res: Response): void {
-  res.json({ success: true, data: toChallengeInfo(challengeOr404(req.params.slug)) });
+export async function getChallenge(req: Request, res: Response): Promise<void> {
+  res.json({ success: true, data: toChallengeInfo(await publicChallenge(req.params.slug)) });
 }
 
 type BoardRow = {
@@ -163,9 +250,16 @@ async function withAgents<T extends BoardRow>(rows: T[]) {
 
 /** Each agent's best result at one challenge, best first; ties go to the faster. */
 export async function challengeBoard(req: Request, res: Response): Promise<void> {
-  const challenge = challengeOr404(req.params.slug);
+  const challenge = await publicChallenge(req.params.slug);
   const rows = await Attempt.aggregate<BoardRow>([
-    { $match: { challenge: challenge.slug, status: 'finished', points: { $gt: 0 } } },
+    {
+      $match: {
+        challenge: challenge.slug,
+        status: 'finished',
+        points: { $gt: 0 },
+        test: { $ne: true },
+      },
+    },
     { $sort: { points: -1, timeMs: 1 } },
     {
       $group: {
@@ -188,7 +282,7 @@ export async function challengeBoard(req: Request, res: Response): Promise<void>
 /** The season: each agent's best at every challenge, added up. */
 export async function seasonBoard(_req: Request, res: Response): Promise<void> {
   const rows = await Attempt.aggregate<BoardRow>([
-    { $match: { status: 'finished', points: { $gt: 0 } } },
+    { $match: { status: 'finished', points: { $gt: 0 }, test: { $ne: true } } },
     { $group: { _id: { agent: '$agent', challenge: '$challenge' }, best: { $max: '$points' } } },
     { $group: { _id: '$_id.agent', points: { $sum: '$best' }, played: { $sum: 1 } } },
     { $sort: { points: -1 } },
@@ -201,7 +295,7 @@ export async function seasonBoard(_req: Request, res: Response): Promise<void> {
 
 export async function startAttempt(req: Request, res: Response): Promise<void> {
   const agent = playingAgent(req);
-  const challenge = challengeOr404(req.params.slug);
+  const { challenge, test, version } = await challengeForAgent(req.params.slug, agent);
   const now = Date.now();
 
   /* Anything left running past its clock is closed first, so it neither
@@ -218,15 +312,13 @@ export async function startAttempt(req: Request, res: Response): Promise<void> {
     challenge: challenge.slug,
     startedAt: { $gt: new Date(now - DAY_MS) },
   });
-  if (today >= ATTEMPTS_PER_DAY) {
-    throw new ApiError(
-      429,
-      `${ATTEMPTS_PER_DAY} attempts a day at each challenge. Try again tomorrow.`,
-    );
+  const allowance = test ? TEST_ATTEMPTS_PER_DAY : ATTEMPTS_PER_DAY;
+  if (today >= allowance) {
+    throw new ApiError(429, `${allowance} attempts a day at each challenge. Try again tomorrow.`);
   }
 
   const seed = crypto.randomInt(2 ** 31);
-  const generated = challenge.generate(seed);
+  const generated = await Promise.resolve(challenge.generate(seed)).catch(challengeFailed);
   try {
     const attempt = await Attempt.create({
       attemptId: `att_${crypto.randomBytes(8).toString('hex')}`,
@@ -237,12 +329,17 @@ export async function startAttempt(req: Request, res: Response): Promise<void> {
       puzzle: generated.puzzle,
       secret: generated.secret,
       state: generated.state ?? null,
+      limitMs: challenge.limitMs,
+      test,
+      version,
       startedAt: new Date(now),
       deadline: new Date(now + challenge.limitMs),
     });
     const observation =
       challenge.observe && generated.state
-        ? challenge.observe(generated.secret, generated.state)
+        ? await Promise.resolve(
+            challenge.observe(generated.secret, generated.state, generated.puzzle),
+          ).catch(challengeFailed)
         : undefined;
     res.status(201).json({
       success: true,
@@ -273,10 +370,12 @@ export async function listMyAttempts(req: Request, res: Response): Promise<void>
 
 export async function getAttempt(req: Request, res: Response): Promise<void> {
   const attempt = await ownAttempt(req, true);
-  const challenge = findChallenge(attempt.challenge)!;
+  const challenge = await challengeForAttempt(attempt);
   const observation =
     challenge.observe && attempt.state
-      ? challenge.observe(attempt.secret, attempt.state)
+      ? await Promise.resolve(
+          challenge.observe(attempt.secret, attempt.state, attempt.puzzle),
+        ).catch(challengeFailed)
       : undefined;
   res.json({
     success: true,
@@ -291,16 +390,17 @@ export async function getAttempt(req: Request, res: Response): Promise<void> {
 export async function moveAttempt(req: Request, res: Response): Promise<void> {
   const { moves } = req.body as MovesInput;
   const attempt = await ownAttempt(req, true);
-  const challenge = findChallenge(attempt.challenge)!;
+  const challenge = await challengeForAttempt(attempt);
   if (!challenge.step || !attempt.state)
     throw ApiError.badRequest('This challenge takes an answer, not moves');
   if (attempt.status !== 'active') throw ApiError.conflict(`This attempt is ${attempt.status}`);
 
-  const before = (attempt.state as { steps: number }).steps;
-  const result = challenge.step(attempt.secret, attempt.state, moves);
-  /* Guarded on the step count, so two calls racing cannot both move from
-     the same square. */
-  const guard = { 'state.steps': before };
+  const result = await Promise.resolve(
+    challenge.step(attempt.secret, attempt.state, moves, attempt.puzzle),
+  ).catch(challengeFailed);
+  /* Guarded on the last write, so two calls racing cannot both move from the
+     same square — whatever shape a challenge's state takes. */
+  const guard = { updatedAt: attempt.updatedAt };
   let saved: IAttempt | null;
   if (result.finished) {
     saved = await finish(attempt, challenge, result.finished, { state: result.state }, guard).catch(
@@ -320,12 +420,16 @@ export async function moveAttempt(req: Request, res: Response): Promise<void> {
 export async function submitAttempt(req: Request, res: Response): Promise<void> {
   const { answer } = req.body as SubmitInput;
   const attempt = await ownAttempt(req, true);
-  const challenge = findChallenge(attempt.challenge)!;
+  const challenge = await challengeForAttempt(attempt);
   if (!challenge.grade)
     throw ApiError.badRequest('This challenge is played with moves, not an answer');
   if (attempt.status !== 'active') throw ApiError.conflict(`This attempt is ${attempt.status}`);
 
-  const result = challenge.grade({ puzzle: attempt.puzzle, secret: attempt.secret }, answer);
+  /* A community grader that fails leaves the attempt open, so the agent can
+     submit again before its deadline. */
+  const result = await Promise.resolve(
+    challenge.grade({ puzzle: attempt.puzzle, secret: attempt.secret }, answer),
+  ).catch(challengeFailed);
   const done = await finish(attempt, challenge, result);
   res.json({ success: true, data: { attempt: toAttempt(done) } });
 }

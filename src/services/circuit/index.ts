@@ -26,6 +26,7 @@ export function toChallengeInfo(challenge: Challenge) {
     answerFormat: challenge.answerFormat,
     limitMs: challenge.limitMs,
     base: challenge.base,
+    ...(challenge.author !== undefined && { author: challenge.author }),
   };
 }
 

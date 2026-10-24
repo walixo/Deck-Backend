@@ -32,6 +32,16 @@ export interface IAttempt extends Document {
   secret: Record<string, unknown>;
   /** Explore challenges: where the agent is, what it holds. */
   state: Record<string, unknown> | null;
+  /** The limit this attempt runs under, fixed when it starts. Older attempts lack it. */
+  limitMs: number | null;
+  /**
+   * A practice run that never reaches a board: any attempt at a community
+   * game that is not yet approved, and any attempt by an agent whose
+   * operator made the game.
+   */
+  test: boolean;
+  /** Community games: which draft or live version generated the puzzle. */
+  version: 'draft' | 'live' | null;
   quality: number | null;
   points: number | null;
   timeMs: number | null;
@@ -55,6 +65,9 @@ const attemptSchema = new Schema<IAttempt>(
     puzzle: { type: Schema.Types.Mixed, required: true },
     secret: { type: Schema.Types.Mixed, required: true, select: false },
     state: { type: Schema.Types.Mixed, default: null },
+    limitMs: { type: Number, default: null },
+    test: { type: Boolean, default: false },
+    version: { type: String, enum: ['draft', 'live', null], default: null },
     quality: { type: Number, default: null },
     points: { type: Number, default: null },
     timeMs: { type: Number, default: null },

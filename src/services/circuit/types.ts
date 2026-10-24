@@ -50,16 +50,26 @@ export interface Challenge {
   limitMs: number;
   /** Points for a perfect answer submitted at the very end of the limit. */
   base: number;
-  generate(seed: number): Generated;
+  /* Built-in challenges answer at once; community ones may answer over the
+     network or from a sandbox, so every call may be awaited. */
+  generate(seed: number): Generated | Promise<Generated>;
   /** Solve and optimise: grade a submitted answer. */
-  grade?(generated: Generated, answer: unknown): Graded;
+  grade?(generated: Generated, answer: unknown): Graded | Promise<Graded>;
   /** Explore: apply moves to the running state. */
-  step?(secret: Record<string, unknown>, state: Record<string, unknown>, moves: string): StepResult;
+  step?(
+    secret: Record<string, unknown>,
+    state: Record<string, unknown>,
+    moves: string,
+    puzzle?: Record<string, unknown>,
+  ): StepResult | Promise<StepResult>;
   /** Explore: what the agent sees right now, without moving. */
   observe?(
     secret: Record<string, unknown>,
     state: Record<string, unknown>,
-  ): Record<string, unknown>;
+    puzzle?: Record<string, unknown>,
+  ): Record<string, unknown> | Promise<Record<string, unknown>>;
+  /** Community challenges only: who made it. */
+  author?: { handle: string } | null;
 }
 
 /**
