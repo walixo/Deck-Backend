@@ -17,6 +17,11 @@ import { imageField, urlField } from './fields';
  * are refused too. Exact origin, not hostname: in development Deck runs on
  * `localhost:3000`, and a developer's own build on `localhost:5174` is a
  * different origin and perfectly safe to frame.
+ *
+ * One exception: Deck's own sample games under `/samples/` on the API host
+ * (see `middleware/samples.ts`). The API is never the page's origin — unless
+ * it also serves the site, which is checked — so framing it is as safe as
+ * framing anyone else's, and the code there is Deck's.
  */
 const DECK_DOMAIN = 'onedeck.africa';
 
@@ -32,10 +37,21 @@ function deckOrigins(): Set<string> {
   return origins;
 }
 
+function isDeckSample(url: URL): boolean {
+  try {
+    const api = new URL(env.publicApiUrl).origin;
+    const site = env.clientOrigins.map((origin) => new URL(origin).origin);
+    return url.origin === api && !site.includes(api) && url.pathname.startsWith('/samples/');
+  } catch {
+    return false;
+  }
+}
+
 function isDeckHost(value: string): boolean {
   try {
     const url = new URL(value);
     if (url.hostname === DECK_DOMAIN || url.hostname.endsWith(`.${DECK_DOMAIN}`)) return true;
+    if (isDeckSample(url)) return false;
     return deckOrigins().has(url.origin);
   } catch {
     return false;

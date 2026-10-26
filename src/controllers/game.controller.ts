@@ -35,6 +35,8 @@ const RESERVED_SLUGS = new Set([
   'docs',
   /* `/games/agents` is Deck Circuit's landing page. */
   'agents',
+  /* `/games/rooms` is where players find each other. */
+  'rooms',
 ]);
 
 /** The arcade. Approved games only, Deck's featured ones first. */

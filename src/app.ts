@@ -5,6 +5,7 @@ import { env } from './config/env';
 import { UPLOAD_DIR, UPLOAD_ROUTE } from './config/uploads';
 import { bachsWebhook } from './controllers/payment.controller';
 import { errorHandler, notFoundHandler } from './middleware/error';
+import { serveSample } from './middleware/samples';
 import { hasFrontendBuild, mountFrontend } from './middleware/unfurl';
 import routes from './routes';
 import { asyncHandler } from './utils/asyncHandler';
@@ -141,6 +142,9 @@ export function createApp(): Application {
       },
     }),
   );
+
+  /* Deck's sample games — see middleware/samples.ts for why they live here. */
+  app.get('/samples/:name', asyncHandler(serveSample));
 
   app.use('/api', routes);
 

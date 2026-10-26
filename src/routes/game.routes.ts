@@ -41,6 +41,7 @@ import {
   startRoom,
   streamRoom,
 } from '../controllers/room.controller';
+import { findRoomByCode, listMyRooms, listRooms } from '../controllers/roomDirectory.controller';
 import { optionalAuth, requireAuth } from '../middleware/auth';
 import { rateLimit } from '../middleware/rateLimit';
 import { validate } from '../middleware/validate';
@@ -82,6 +83,14 @@ router.get('/mine', asyncHandler(requireAuth), asyncHandler(listMyGames));
    to know whether the viewer is the author or staff to show an unapproved one. */
 /* Before `/:slug`, so "players" is never read as a game. */
 router.get('/players', asyncHandler(activePlayers));
+/* The Rooms page. Also before `/:slug`, and "rooms" is a reserved slug. */
+router.get('/rooms', asyncHandler(listRooms));
+router.get('/rooms/mine', asyncHandler(requireAuth), asyncHandler(listMyRooms));
+router.get(
+  '/rooms/code/:code',
+  rateLimit({ windowMs: 60_000, max: 30, message: 'Too many tries — wait a minute' }),
+  asyncHandler(findRoomByCode),
+);
 router.get('/:slug', asyncHandler(optionalAuth), asyncHandler(getGame));
 
 router.post('/', asyncHandler(requireAuth), validate(submitGameSchema), asyncHandler(submitGame));
