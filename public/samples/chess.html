@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Chess — on Deck Games</title>
+    <!--
+      Chess for two, on Deck Games multiplayer. Like Four in a Row, everything
+      goes through the public SDK.
+
+        · Rooms come from Deck: quick match, a private room, or a code.
+        · The host's copy is the arbiter. A guest sends { from, to, promo };
+          the host checks it against the full rules and publishes the game
+          with setState(). Everyone draws from the `state` event.
+        · Ten minutes each. The host keeps the clocks and calls the flag.
+        · Resign, offer a draw, rematch with colours swapped.
+      Opened outside Deck, two players share one board, without clocks.
+    -->
+    <script src="%DECK_ORIGIN%/sdk/deck-games-v1.js" data-deck-origins="%DECK_ORIGINS%"></script>
+    <style>
+      :root {
+        --night: #050505; --panel: #0d0d0d; --ink: #f4f2ee; --mute: rgb(244 242 238 / 0.6); --line: rgb(244 242 238 / 0.14);
+        --ember: #e8501f; --teal: #5dcaa5; --edge: #f4f2ee; --light: #efe6d4; --dark: #b4865e;
+        --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        --glyph: 'Segoe UI Symbol', 'Apple Symbols', 'Noto Sans Symbols 2', 'DejaVu Sans', serif;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body { background: var(--night); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased;
+        display: flex; justify-content: center; overflow-y: auto; }
+      main { width: 100%; max-width: 720px; min-height: 100%; display: flex; flex-direction: column; padding: 16px 16px 20px; gap: 14px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .brand { font: 700 13px var(--mono); letter-spacing: 0.18em; }
+      .brand b { color: var(--ember); }
+      .chip { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; padding: 6px 12px;
+        border-radius: 999px; border: 1.5px solid var(--line); color: var(--mute); }
+      .view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 14px; }
+      .view[hidden] { display: none; }
+      h1 { font-size: clamp(34px, 9vw, 56px); font-weight: 650; letter-spacing: -0.05em; line-height: 0.95; }
+      h1 span { color: var(--mute); }
+      p.lead { color: var(--mute); font-size: 16px; line-height: 1.5; max-width: 32em; }
+      .stack { display: grid; gap: 12px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      button { font: 650 12px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: #fff;
+        background: var(--ember); border: 1.5px solid var(--edge); border-radius: 6px; box-shadow: 3px 3px 0 var(--edge);
+        padding: 13px 16px; cursor: pointer; transition: transform 0.08s, box-shadow 0.08s; }
+      button:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--edge); }
+      button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--edge); }
+      button.quiet { background: var(--panel); color: var(--ink); }
+      button:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: 3px 3px 0 var(--edge); }
+      button[hidden] { display: none; }
+      input { font: 650 20px var(--mono); letter-spacing: 0.3em; text-transform: uppercase; width: 9.5em; padding: 11px 14px;
+        border-radius: 6px; border: 1.5px solid var(--edge); background: var(--panel); color: var(--ink); outline: none; }
+      input::placeholder { color: rgb(244 242 238 / 0.3); }
+      .slab { background: var(--panel); border: 1.5px solid var(--edge); border-radius: 10px; box-shadow: 5px 5px 0 var(--edge); padding: 18px; }
+      .label { font: 600 11px var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--mute); }
+      .code { font: 700 clamp(40px, 12vw, 64px) var(--mono); letter-spacing: 0.14em; margin-top: 6px; }
+      .seat { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1.5px solid var(--line); font-size: 18px; }
+      .seat:first-of-type { border-top: 0; }
+      .seat .tag { margin-left: auto; font: 600 12px var(--mono); letter-spacing: 0.1em; color: var(--mute); }
+      .seat .tag.ok { color: var(--teal); }
+      .swatch { width: 22px; height: 22px; border-radius: 5px; border: 1.5px solid var(--edge); flex: none; }
+      .swatch.w { background: #fff; } .swatch.b { background: #111; }
+      #note { min-height: 1.4em; color: var(--mute); font-size: 14px; }
+
+      /* The players either side of the board. */
+      .bar { display: flex; align-items: center; gap: 10px; font-size: 15px; min-height: 36px; }
+      .bar .name { font-weight: 600; }
+      .bar .taken { font-family: var(--glyph); font-size: 18px; letter-spacing: -0.12em; color: var(--mute); }
+      .bar .clock { margin-left: auto; font: 700 18px var(--mono); padding: 5px 10px; border-radius: 6px; border: 1.5px solid var(--line); min-width: 5.2em; text-align: center; }
+      .bar .clock.run { border-color: var(--edge); background: var(--ink); color: #0e0e0e; }
+      .bar .clock.low { background: var(--ember); color: #fff; border-color: var(--edge); }
+      .bar .clock[hidden] { display: none; }
+
+      /* The board. Sized to whichever runs out first: the width or the height. */
+      .stage { display: grid; place-items: center; }
+      .board { container-type: inline-size; position: relative; width: min(100%, calc(100vh - 290px), 560px); min-width: 260px; aspect-ratio: 1;
+        display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); border: 2px solid var(--edge); border-radius: 6px; overflow: hidden;
+        box-shadow: 6px 6px 0 var(--edge); }
+      .sq { all: unset; position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; overflow: hidden; cursor: pointer; font-family: var(--glyph);
+        font-size: 10cqw; line-height: 1; user-select: none; -webkit-user-select: none; }
+      .sq.l { background: var(--light); } .sq.d { background: var(--dark); }
+      .sq.last::before { content: ''; position: absolute; inset: 0; background: rgb(232 80 31 / 0.32); }
+      .sq.sel::before { content: ''; position: absolute; inset: 0; background: rgb(232 80 31 / 0.55); }
+      .sq.check::before { content: ''; position: absolute; inset: 0; background: radial-gradient(circle, rgb(255 40 40 / 0.85), rgb(255 40 40 / 0) 70%); }
+      .sq.to::after { content: ''; position: absolute; width: 30%; height: 30%; border-radius: 50%; background: rgb(14 14 14 / 0.28); }
+      .sq.to.cap::after { width: 86%; height: 86%; background: none; border: 0.9cqw solid rgb(14 14 14 / 0.3); }
+      .sq:focus-visible { outline: 3px solid var(--teal); outline-offset: -3px; }
+      .pc { position: relative; z-index: 1; }
+      .pc.w { color: #fff; -webkit-text-stroke: 0.25cqw #1a1a1a; text-shadow: 0 0.35cqw 0 rgb(0 0 0 / 0.25); }
+      .pc.b { color: #161616; -webkit-text-stroke: 0.15cqw #000; text-shadow: 0 0.35cqw 0 rgb(0 0 0 / 0.2); }
+      .coord { position: absolute; font: 600 2.2cqw var(--mono); opacity: 0.7; z-index: 1; }
+      .coord.f { right: 4%; bottom: 3%; } .coord.r { left: 4%; top: 3%; }
+      .sq.l .coord { color: var(--dark); } .sq.d .coord { color: var(--light); }
+
+      .promo { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgb(5 5 5 / 0.6); }
+      .promo[hidden] { display: none; }
+      .promo .pick { display: flex; gap: 2cqw; padding: 2.5cqw; background: var(--panel); border: 2px solid var(--edge); border-radius: 10px; box-shadow: 5px 5px 0 var(--edge); }
+      .promo .pick button { all: unset; cursor: pointer; width: 13cqw; height: 13cqw; display: grid; place-items: center; font-family: var(--glyph); font-size: 10cqw;
+        background: var(--light); border-radius: 6px; }
+      .promo .pick button:hover { background: #fff; }
+
+      #status { text-align: center; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; min-height: 1.3em; }
+      #moves { font: 500 13px var(--mono); color: var(--mute); white-space: nowrap; overflow-x: auto; scrollbar-width: none; text-align: center; min-height: 1.2em; }
+      #moves b { color: var(--ink); font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><span class="brand"><b>♞</b> CHESS</span><span class="chip" id="chip">Menu</span></header>
+
+      <!-- Menu: find someone to play. -->
+      <section class="view" id="menu">
+        <h1>Chess.<br /><span>Ten minutes each.</span></h1>
+        <p class="lead">Play a stranger, or open a private room and send a friend the code. The host plays white first; colours swap every rematch.</p>
+        <div class="stack" id="online">
+          <div class="row">
+            <button id="quick">Quick match</button>
+            <button class="quiet" id="private">Private room</button>
+          </div>
+          <div class="row">
+            <input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Room code" />
+            <button class="quiet" id="joinBtn">Join</button>
+          </div>
+        </div>
+        <div class="row"><button class="quiet" id="localBtn">Play on one board</button></div>
+      </section>
+
+      <!-- Lobby. -->
+      <section class="view" id="lobby" hidden>
+        <div class="slab">
+          <p class="label" id="lobbyLabel">Room code</p>
+          <p class="code" id="code">——————</p>
+          <p class="lead" style="margin-top: 6px">Friends can enter it in the game, or on Deck at <b>Games → Rooms</b>.</p>
+        </div>
+        <div class="slab" id="seats"></div>
+        <div class="row"><button id="readyBtn">I'm ready</button><button class="quiet" id="leaveLobby">Leave</button></div>
+      </section>
+
+      <!-- Play. -->
+      <section class="view" id="play" hidden>
+        <div class="bar" id="topBar"><span class="swatch" id="topSw"></span><span class="name" id="topName">—</span><span class="taken" id="topTaken"></span><span class="clock" id="topClock"></span></div>
+        <div class="stage"><div class="board" id="board" role="grid" aria-label="Chess board">
+          <div class="promo" id="promo" hidden><div class="pick" id="pick"></div></div>
+        </div></div>
+        <div class="bar" id="botBar"><span class="swatch" id="botSw"></span><span class="name" id="botName">—</span><span class="taken" id="botTaken"></span><span class="clock" id="botClock"></span></div>
+        <p id="status"></p>
+        <p id="moves"></p>
+        <div class="row" style="justify-content: center">
+          <button class="quiet" id="drawBtn">Offer draw</button>
+          <button id="acceptBtn" hidden>Accept draw</button>
+          <button class="quiet" id="resignBtn">Resign</button>
+          <button id="again" hidden>Rematch</button>
+          <button class="quiet" id="leavePlay">Leave</button>
+        </div>
+      </section>
+
+      <p id="note" role="status"></p>
+    </main>
+
+    <script>
+      // ENGINE START — the rules of chess, and nothing about the screen.
+      // Squares run 0–63 from a8 to h1, the order a FEN lists them.
+      const FILES = 'abcdefgh';
+      const sqName = (sq) => FILES[sq % 8] + (8 - Math.floor(sq / 8));
+      const parse = (s) => (8 - Number(s[1])) * 8 + FILES.indexOf(s[0]);
+      const other = (c) => (c === 'w' ? 'b' : 'w');
+      const KNIGHT = [[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]];
+      const KING = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+      const ROOK = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+      const BISHOP = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+      const at = (r, f) => (r >= 0 && r < 8 && f >= 0 && f < 8 ? r * 8 + f : -1);
+
+      function fromFen(fen) {
+        const [rows, turn, castling, ep, half, full] = fen.trim().split(/\s+/);
+        const board = [];
+        for (const ch of rows.replace(/\//g, '')) {
+          if (/\d/.test(ch)) for (let i = 0; i < Number(ch); i++) board.push(null);
+          else board.push((ch === ch.toUpperCase() ? 'w' : 'b') + ch.toUpperCase());
+        }
+        return { board, turn, castling: castling === '-' ? '' : castling, ep: ep === '-' ? -1 : parse(ep), half: Number(half || 0), full: Number(full || 1) };
+      }
+      const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+      /** Is `sq` attacked by any piece of colour `by`? */
+      function attacked(board, sq, by) {
+        const r = Math.floor(sq / 8), f = sq % 8;
+        const dr = by === 'w' ? 1 : -1; /* a white pawn attacks from the rank below */
+        for (const df of [-1, 1]) { const s = at(r + dr, f + df); if (s >= 0 && board[s] === by + 'P') return true; }
+        for (const [a, b] of KNIGHT) { const s = at(r + a, f + b); if (s >= 0 && board[s] === by + 'N') return true; }
+        for (const [a, b] of KING) { const s = at(r + a, f + b); if (s >= 0 && board[s] === by + 'K') return true; }
+        for (const [dirs, kinds] of [[ROOK, 'RQ'], [BISHOP, 'BQ']]) {
+          for (const [a, b] of dirs) {
+            let rr = r + a, ff = f + b, s;
+            while ((s = at(rr, ff)) >= 0) {
+              const p = board[s];
+              if (p) { if (p[0] === by && kinds.includes(p[1])) return true; break; }
+              rr += a; ff += b;
+            }
+          }
+        }
+        return false;
+      }
+
+      const kingOf = (board, c) => board.indexOf(c + 'K');
+      const inCheck = (pos, c = pos.turn) => attacked(pos.board, kingOf(pos.board, c), other(c));
+
+      /** Moves that obey how pieces move, before asking whether the king is left in check. */
+      function pseudo(pos) {
+        const { board, turn: c, ep, castling } = pos;
+        const out = [];
+        const add = (from, to, extra = {}) => out.push({ from, to, piece: board[from][1], captured: board[to] ? board[to][1] : null, ...extra });
+        for (let from = 0; from < 64; from++) {
+          const p = board[from];
+          if (!p || p[0] !== c) continue;
+          const r = Math.floor(from / 8), f = from % 8, kind = p[1];
+          if (kind === 'P') {
+            const dir = c === 'w' ? -1 : 1, startRank = c === 'w' ? 6 : 1, lastRank = c === 'w' ? 0 : 7;
+            const push = (to, extra) => {
+              if (Math.floor(to / 8) === lastRank) for (const promo of 'QRBN') add(from, to, { ...extra, promo });
+              else add(from, to, extra);
+            };
+            const one = at(r + dir, f);
+            if (one >= 0 && !board[one]) {
+              push(one);
+              const two = at(r + 2 * dir, f);
+              if (r === startRank && !board[two]) add(from, two, { double: true });
+            }
+            for (const df of [-1, 1]) {
+              const to = at(r + dir, f + df);
+              if (to < 0) continue;
+              if (board[to] && board[to][0] !== c) push(to);
+              else if (to === ep) add(from, to, { enPassant: true, captured: 'P' });
+            }
+          } else if (kind === 'N' || kind === 'K') {
+            for (const [a, b] of kind === 'N' ? KNIGHT : KING) {
+              const to = at(r + a, f + b);
+              if (to >= 0 && (!board[to] || board[to][0] !== c)) add(from, to);
+            }
+            if (kind === 'K') {
+              const home = c === 'w' ? 60 : 4, foe = other(c);
+              const [K, Q] = c === 'w' ? ['K', 'Q'] : ['k', 'q'];
+              if (from === home && !attacked(board, home, foe)) {
+                if (castling.includes(K) && !board[home + 1] && !board[home + 2] && board[home + 3] === c + 'R' &&
+                  !attacked(board, home + 1, foe) && !attacked(board, home + 2, foe)) add(from, home + 2, { castle: 'K' });
+                if (castling.includes(Q) && !board[home - 1] && !board[home - 2] && !board[home - 3] && board[home - 4] === c + 'R' &&
+                  !attacked(board, home - 1, foe) && !attacked(board, home - 2, foe)) add(from, home - 2, { castle: 'Q' });
+              }
+            }
+          } else {
+            const dirs = kind === 'R' ? ROOK : kind === 'B' ? BISHOP : [...ROOK, ...BISHOP];
+            for (const [a, b] of dirs) {
+              let rr = r + a, ff = f + b, to;
+              while ((to = at(rr, ff)) >= 0) {
+                if (board[to]) { if (board[to][0] !== c) add(from, to); break; }
+                add(from, to);
+                rr += a; ff += b;
+              }
+            }
+          }
+        }
+        return out;
+      }
+
+      /** The position after a move. Never changes the one passed in. */
+      function make(pos, m) {
+        const board = pos.board.slice();
+        const c = pos.turn;
+        board[m.to] = m.promo ? c + m.promo : board[m.from];
+        board[m.from] = null;
+        if (m.enPassant) board[m.to + (c === 'w' ? 8 : -8)] = null;
+        if (m.castle === 'K') { board[m.to - 1] = board[m.to + 1]; board[m.to + 1] = null; }
+        if (m.castle === 'Q') { board[m.to + 1] = board[m.to - 2]; board[m.to - 2] = null; }
+        let castling = pos.castling;
+        const strip = (chars) => { for (const ch of chars) castling = castling.replace(ch, ''); };
+        if (m.piece === 'K') strip(c === 'w' ? 'KQ' : 'kq');
+        for (const sq of [m.from, m.to]) {
+          if (sq === 63) strip('K'); if (sq === 56) strip('Q'); if (sq === 7) strip('k'); if (sq === 0) strip('q');
+        }
+        return {
+          board, turn: other(c), castling,
+          ep: m.double ? (m.from + m.to) / 2 : -1,
+          half: m.piece === 'P' || m.captured ? 0 : pos.half + 1,
+          full: pos.full + (c === 'b' ? 1 : 0),
+        };
+      }
+
+      function legal(pos) {
+        return pseudo(pos).filter((m) => !inCheck(make(pos, m), pos.turn));
+      }
+
+      /** Standard algebraic notation: Nf3, exd5, O-O, e8=Q+, Qh4#. */
+      function san(pos, m, all = legal(pos)) {
+        let s;
+        if (m.castle) s = m.castle === 'K' ? 'O-O' : 'O-O-O';
+        else if (m.piece === 'P') s = (m.captured ? FILES[m.from % 8] + 'x' : '') + sqName(m.to) + (m.promo ? '=' + m.promo : '');
+        else {
+          const rivals = all.filter((o) => o.piece === m.piece && o.to === m.to && o.from !== m.from);
+          let dis = '';
+          if (rivals.length) {
+            const sameFile = rivals.some((o) => o.from % 8 === m.from % 8);
+            const sameRank = rivals.some((o) => Math.floor(o.from / 8) === Math.floor(m.from / 8));
+            dis = !sameFile ? FILES[m.from % 8] : !sameRank ? sqName(m.from)[1] : sqName(m.from);
+          }
+          s = m.piece + dis + (m.captured ? 'x' : '') + sqName(m.to);
+        }
+        const next = make(pos, m);
+        if (inCheck(next)) s += legal(next).length ? '+' : '#';
+        return s;
+      }
+
+      /** Not enough wood left for anyone to mate. */
+      function insufficient(board) {
+        const pieces = board.map((p, sq) => (p && p[1] !== 'K' ? { p, sq } : null)).filter(Boolean);
+        if (pieces.length === 0) return true;
+        if (pieces.length === 1 && 'BN'.includes(pieces[0].p[1])) return true;
+        if (pieces.every(({ p }) => p[1] === 'B')) {
+          const shade = (sq) => (Math.floor(sq / 8) + (sq % 8)) % 2;
+          return pieces.every(({ sq }) => shade(sq) === shade(pieces[0].sq));
+        }
+        return false;
+      }
+
+      /** A short fingerprint of a position, for counting repetitions. */
+      function key(pos) {
+        const text = pos.board.map((p) => p || '.').join('') + pos.turn + pos.castling + pos.ep;
+        let h = 2166136261;
+        for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+        return (h >>> 0).toString(36);
+      }
+
+      /** How the game stands for the side to move: null while it goes on. */
+      function verdict(pos, reps) {
+        if (!legal(pos).length) return inCheck(pos) ? { winner: other(pos.turn), reason: 'checkmate' } : { winner: null, reason: 'stalemate' };
+        if (insufficient(pos.board)) return { winner: null, reason: 'insufficient material' };
+        if (pos.half >= 100) return { winner: null, reason: 'the fifty-move rule' };
+        if (reps >= 3) return { winner: null, reason: 'threefold repetition' };
+        return null;
+      }
+      // ENGINE END
+
+      /* ------------------------------------------------------- the game --- */
+      const CLOCK_MS = 10 * 60 * 1000;
+      const GLYPH = { K: '♚', Q: '♛', R: '♜', B: '♝', N: '♞', P: '♟' }; /* filled set, coloured by CSS */
+      const VALUE = { Q: 9, R: 5, B: 3, N: 3, P: 1 };
+      const $ = (id) => document.getElementById(id);
+      const mp = () => window.DeckGames.multiplayer;
+
+      let deck = { standalone: true };
+      let me = null, room = null, game = null, local = false, starting = false;
+      let selected = -1, pendingPromo = null, receivedAt = Date.now();
+
+      /** A fresh game. `players` is { w, b } as player ids. */
+      function fresh(players, round = 1, wins = {}) {
+        const pos = fromFen(START);
+        return { pos, players, sans: [], last: null, keys: { [key(pos)]: 1 }, result: null,
+          clocks: { w: CLOCK_MS, b: CLOCK_MS }, turnAt: Date.now(), drawOffer: null, round, wins };
+      }
+
+      /** The game after `color` plays `move` ({ from, to, promo }), or null if it is not legal. */
+      function apply(state, color, move) {
+        if (state.result || state.pos.turn !== color) return null;
+        const options = legal(state.pos);
+        const m = options.find((o) => o.from === move.from && o.to === move.to && (!o.promo || o.promo === (move.promo || 'Q')));
+        if (!m) return null;
+        const now = Date.now();
+        const clocks = { ...state.clocks };
+        if (!local) clocks[color] -= now - state.turnAt;
+        if (!local && clocks[color] <= 0) return flag(state, color);
+        const sanText = san(state.pos, m, options);
+        const pos = make(state.pos, m);
+        const keys = pos.half === 0 ? {} : { ...state.keys };
+        const k = key(pos);
+        keys[k] = (keys[k] || 0) + 1;
+        const result = verdict(pos, keys[k]);
+        return finish({ ...state, pos, keys, clocks, turnAt: now, sans: [...state.sans, sanText], last: [m.from, m.to], drawOffer: null, result });
+      }
+
+      function flag(state, color) {
+        const clocks = { ...state.clocks, [color]: 0 };
+        const foe = other(color);
+        /* Out of time against a lone king is a draw: nobody could have mated. */
+        const canMate = state.pos.board.some((p) => p && p[0] === foe && p[1] !== 'K');
+        return finish({ ...state, clocks, result: canMate ? { winner: foe, reason: 'time' } : { winner: null, reason: 'time against insufficient material' } });
+      }
+
+      /** Settles the score once a result arrives. */
+      function finish(state) {
+        if (!state.result || state.result.winner === null) return state;
+        const id = state.players[state.result.winner];
+        return { ...state, wins: { ...state.wins, [id]: (state.wins[id] || 0) + 1 } };
+      }
+
+      /* ------------------------------------------------------- the arbiter --- */
+      const isHost = () => !local && room && room.hostPlayerId === me;
+      const colorOf = (id) => (game ? (game.players.w === id ? 'w' : game.players.b === id ? 'b' : null) : null);
+
+      function publish(next) {
+        game = next;
+        receivedAt = Date.now();
+        render();
+        if (!local) mp().setState(next).catch(report);
+      }
+
+      function arbiter(from, data) {
+        if (!isHost() || !game || !data) return;
+        const color = colorOf(from);
+        if (data.rematch && game.result) return publish(fresh({ w: game.players.b, b: game.players.w }, game.round + 1, game.wins));
+        if (!color || game.result) return;
+        if (data.resign) return publish(finish({ ...game, result: { winner: other(color), reason: 'resignation' } }));
+        if (data.offer && !game.drawOffer) return publish({ ...game, drawOffer: color });
+        if (data.accept && game.drawOffer === other(color)) return publish({ ...game, result: { winner: null, reason: 'agreement' } });
+        if (data.from !== undefined) {
+          const next = apply(game, color, { from: Number(data.from), to: Number(data.to), promo: data.promo });
+          if (next) publish(next);
+        }
+      }
+
+      function begin() {
+        if (!isHost() || game) return;
+        const guest = room.players.find((p) => p.playerId !== room.hostPlayerId).playerId;
+        publish(fresh({ w: room.hostPlayerId, b: guest }));
+      }
+
+      /* The host calls the flag. */
+      setInterval(() => {
+        if (isHost() && game && !game.result && game.clocks[game.pos.turn] - (Date.now() - game.turnAt) <= 0) publish(flag(game, game.pos.turn));
+        if (game && !local) drawClocks();
+      }, 250);
+
+      /* ------------------------------------------------------- the room --- */
+      function enter(next) {
+        room = next;
+        if (next.status === 'playing') {
+          if (next.state && !game) { game = next.state; receivedAt = Date.now(); }
+          view('play');
+          if (!game) begin();
+          render();
+        } else {
+          view('lobby');
+          renderLobby();
+        }
+      }
+
+      function onRoom(next) {
+        room = next;
+        if (next.status === 'ended') return backToMenu('The room has closed.');
+        if (next.status === 'playing') {
+          if (!game && next.state) { game = next.state; receivedAt = Date.now(); }
+          if (next.players.length < 2) say('Your opponent left. Leave to find a new game.');
+          render();
+          return;
+        }
+        renderLobby();
+        const all = next.players.length >= next.minPlayers && next.players.every((p) => p.ready);
+        if (isHost() && all && !starting) {
+          starting = true;
+          mp().start().catch(report).finally(() => (starting = false));
+        }
+      }
+
+      async function online(action) {
+        try {
+          say('');
+          if (!me) me = (await window.DeckGames.session()).playerId;
+          enter(await action());
+        } catch (error) {
+          report(error);
+        }
+      }
+
+      function backToMenu(message) {
+        room = null; game = null; local = false; selected = -1;
+        view('menu');
+        say(message || '');
+      }
+
+      async function leave() {
+        if (!local && room) await mp().leave().catch(() => undefined);
+        backToMenu();
+      }
+
+      /* ---------------------------------------------------- drawing it --- */
+      function view(id) {
+        for (const v of ['menu', 'lobby', 'play']) $(v).hidden = v !== id;
+        $('chip').textContent = id === 'menu' ? 'Menu' : id === 'lobby' ? 'Waiting' : local ? 'One board' : 'Live';
+      }
+      const say = (text) => ($('note').textContent = text);
+      function report(error) {
+        if (error && error.code === 'signed_out') return say('Sign in to Deck to play online.');
+        say((error && error.message) || 'Something went wrong — try again.');
+      }
+      const escape = (text) => String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+      const nameOf = (id) => (local ? (id === 'w' ? 'White' : 'Black') : (room && room.players.find((p) => p.playerId === id)?.displayName) || 'Waiting…');
+
+      function renderLobby() {
+        if (!room) return;
+        $('code').textContent = room.code;
+        $('lobbyLabel').textContent = room.visibility === 'public' ? 'Public room · code' : 'Private room · code';
+        const seats = [];
+        for (let i = 0; i < room.maxPlayers; i++) {
+          const p = room.players[i];
+          seats.push(`<div class="seat"><span class="swatch ${i ? 'b' : 'w'}"></span><span>${p ? escape(p.displayName) + (p.playerId === me ? ' (you)' : '') : 'Open seat'}</span>
+            <span class="tag ${p && p.ready ? 'ok' : ''}">${p ? (p.ready ? '✓ READY' : p.host ? 'HOST · WHITE' : 'JOINED') : ''}</span></div>`);
+        }
+        $('seats').innerHTML = seats.join('');
+        const mine = room.players.find((p) => p.playerId === me);
+        $('readyBtn').textContent = mine && mine.ready ? 'Not ready' : "I'm ready";
+      }
+
+      /* Sixty-four squares, made once and repainted. */
+      const squares = [];
+      for (let i = 0; i < 64; i++) {
+        const b = document.createElement('button');
+        b.className = 'sq';
+        b.addEventListener('click', () => tap(Number(b.dataset.sq)));
+        $('board').insertBefore(b, $('promo'));
+        squares.push(b);
+      }
+
+      const myColor = () => (local ? game.pos.turn : colorOf(me));
+      const flipped = () => !local && myColor() === 'b';
+
+      function render() {
+        if (!game) { $('status').textContent = 'Setting up the board…'; return; }
+        const pos = game.pos;
+        const flip = flipped();
+        const options = selected >= 0 ? legal(pos).filter((m) => m.from === selected) : [];
+        const checkSq = inCheck(pos) ? kingOf(pos.board, pos.turn) : -1;
+        squares.forEach((el, i) => {
+          const sq = flip ? 63 - i : i;
+          const r = Math.floor(sq / 8), f = sq % 8;
+          el.dataset.sq = sq;
+          const p = pos.board[sq];
+          const target = options.find((m) => m.to === sq);
+          el.className = 'sq ' + ((r + f) % 2 ? 'd' : 'l') +
+            (game.last && game.last.includes(sq) ? ' last' : '') + (sq === selected ? ' sel' : '') +
+            (sq === checkSq ? ' check' : '') + (target ? ' to' + (target.captured ? ' cap' : '') : '');
+          const fileMark = (flip ? r === 0 : r === 7) ? `<span class="coord f">${FILES[f]}</span>` : '';
+          const rankMark = (flip ? f === 7 : f === 0) ? `<span class="coord r">${8 - r}</span>` : '';
+          el.innerHTML = (p ? `<span class="pc ${p[0]}">${GLYPH[p[1]]}&#xFE0E;</span>` : '') + fileMark + rankMark;
+          el.setAttribute('aria-label', sqName(sq) + (p ? ` ${p[0] === 'w' ? 'white' : 'black'} ${({ K: 'king', Q: 'queen', R: 'rook', B: 'bishop', N: 'knight', P: 'pawn' })[p[1]]}` : ''));
+        });
+
+        /* The players: you at the bottom, the opponent at the top. */
+        const bottom = local ? 'w' : myColor() || 'w', top = other(bottom);
+        for (const [side, color] of [['bot', bottom], ['top', top]]) {
+          const id = local ? color : game.players[color];
+          const label = local ? nameOf(color) : id === me ? 'You' : nameOf(id);
+          const wins = local ? '' : ` · ${game.wins[id] || 0}`;
+          $(`${side}Name`).textContent = label + wins;
+          $(`${side}Sw`).className = `swatch ${color}`;
+          $(`${side}Taken`).textContent = taken(pos.board, color);
+          $(`${side}Clock`).hidden = local;
+        }
+        drawClocks();
+
+        const mine = myColor();
+        const r = game.result;
+        let status;
+        if (r) {
+          const who = r.winner ? (local ? (r.winner === 'w' ? 'White' : 'Black') : game.players[r.winner] === me ? 'You' : nameOf(game.players[r.winner])) : null;
+          status = who ? `${who} ${who === 'You' ? 'win' : 'wins'} by ${r.reason}.` : `Draw by ${r.reason}.`;
+        } else if (local) status = `${pos.turn === 'w' ? 'White' : 'Black'} to move${inCheck(pos) ? ' — check' : ''}`;
+        else if (pos.turn === mine) status = inCheck(pos) ? 'Your move — check!' : 'Your move';
+        else status = `${nameOf(game.players[pos.turn])} is thinking…`;
+        if (!r && game.drawOffer && !local) status += game.drawOffer === mine ? ' · draw offered' : ' · they offer a draw';
+        $('status').textContent = status;
+
+        const sans = game.sans;
+        const parts = [];
+        for (let i = Math.max(0, sans.length - 12 - (sans.length % 2)); i < sans.length; i += 2) {
+          parts.push(`${i / 2 + 1}. ${i + 1 === sans.length ? `<b>${sans[i]}</b>` : sans[i]}${sans[i + 1] ? ' ' + (i + 2 === sans.length ? `<b>${sans[i + 1]}</b>` : sans[i + 1]) : ''}`);
+        }
+        $('moves').innerHTML = parts.join('  ');
+
+        $('again').hidden = !r;
+        $('resignBtn').hidden = Boolean(r) || local;
+        $('drawBtn').hidden = Boolean(r) || local || game.drawOffer === other(mine);
+        $('drawBtn').disabled = Boolean(game.drawOffer);
+        $('acceptBtn').hidden = Boolean(r) || local || game.drawOffer !== other(mine);
+      }
+
+      /** What a side has taken, and by how much it leads. */
+      function taken(board, color) {
+        const start = { Q: 1, R: 2, B: 2, N: 2, P: 8 };
+        const foe = other(color);
+        let out = '', score = 0;
+        for (const k of 'QRBNP') {
+          const left = board.filter((p) => p === foe + k).length;
+          const gone = Math.max(0, start[k] - left);
+          out += GLYPH[k].repeat(gone);
+          score += VALUE[k] * (board.filter((p) => p === color + k).length - left);
+        }
+        return out + (score > 0 ? ` +${score}` : '');
+      }
+
+      function drawClocks() {
+        if (!game || local) return;
+        const bottom = myColor() || 'w';
+        for (const [side, color] of [['bot', bottom], ['top', other(bottom)]]) {
+          let ms = game.clocks[color];
+          const running = !game.result && game.pos.turn === color;
+          if (running) ms -= Date.now() - (isHost() ? game.turnAt : receivedAt);
+          ms = Math.max(0, ms);
+          const s = Math.ceil(ms / 1000);
+          const el = $(`${side}Clock`);
+          el.textContent = ms < 20000 ? (ms / 1000).toFixed(1) : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+          el.className = 'clock' + (running ? ' run' : '') + (running && ms < 30000 ? ' low' : '');
+        }
+      }
+
+      /* ----------------------------------------------------- moving --- */
+      function tap(sq) {
+        if (!game || game.result || pendingPromo) return;
+        const pos = game.pos, mine = myColor();
+        if (pos.turn !== mine) return;
+        const p = pos.board[sq];
+        if (selected >= 0) {
+          const options = legal(pos).filter((m) => m.from === selected && m.to === sq);
+          if (options.length) {
+            if (options.length > 1) return choosePromotion(selected, sq, mine); /* four promotions */
+            return play({ from: selected, to: sq });
+          }
+        }
+        selected = p && p[0] === mine && sq !== selected ? sq : -1;
+        render();
+      }
+
+      function choosePromotion(from, to, color) {
+        pendingPromo = { from, to };
+        $('pick').innerHTML = 'QRBN'.split('').map((k) => `<button data-k="${k}" aria-label="Promote to ${({ Q: 'queen', R: 'rook', B: 'bishop', N: 'knight' })[k]}"><span class="pc ${color}">${GLYPH[k]}&#xFE0E;</span></button>`).join('');
+        $('pick').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+          const move = { ...pendingPromo, promo: b.dataset.k };
+          pendingPromo = null;
+          $('promo').hidden = true;
+          play(move);
+        }));
+        $('promo').hidden = false;
+      }
+
+      function play(move) {
+        selected = -1;
+        if (local) { const next = apply(game, game.pos.turn, move); if (next) { game = next; render(); } return; }
+        if (isHost()) return arbiter(me, move);
+        mp().send(move, { to: 'host' }).catch(report);
+        render();
+      }
+
+      const ask = (data) => (isHost() ? arbiter(me, data) : mp().send(data, { to: 'host' }).catch(report));
+
+      /* --------------------------------------------------------- wiring --- */
+      $('quick').onclick = () => online(() => mp().quickMatch());
+      $('private').onclick = () => online(() => mp().create({ visibility: 'private' }));
+      $('joinBtn').onclick = () => {
+        const code = $('codeIn').value.trim().toUpperCase();
+        if (code.length !== 6) return say('Room codes are six characters.');
+        online(() => mp().join(code));
+      };
+      $('codeIn').addEventListener('keydown', (e) => e.key === 'Enter' && $('joinBtn').click());
+      $('localBtn').onclick = () => { local = true; room = null; game = fresh({ w: 'w', b: 'b' }); selected = -1; view('play'); render(); say(''); };
+      $('readyBtn').onclick = () => {
+        const mine = room && room.players.find((p) => p.playerId === me);
+        mp().setReady(!(mine && mine.ready)).then(onRoom).catch(report);
+      };
+      $('leaveLobby').onclick = leave;
+      $('leavePlay').onclick = leave;
+      /* Tap twice: the sandboxed frame cannot open a confirm() dialog. */
+      let resignArmed = 0;
+      $('resignBtn').onclick = () => {
+        if (Date.now() - resignArmed < 3000) { resignArmed = 0; $('resignBtn').textContent = 'Resign'; return ask({ resign: true }); }
+        resignArmed = Date.now();
+        $('resignBtn').textContent = 'Tap again to resign';
+        setTimeout(() => { if (resignArmed && Date.now() - resignArmed >= 3000) { resignArmed = 0; $('resignBtn').textContent = 'Resign'; } }, 3100);
+      };
+      $('drawBtn').onclick = () => ask({ offer: true });
+      $('acceptBtn').onclick = () => ask({ accept: true });
+      $('again').onclick = () => {
+        if (local) { game = fresh({ w: 'w', b: 'b' }); selected = -1; render(); }
+        else ask({ rematch: true });
+      };
+
+      (async () => {
+        if (window.DeckGames) deck = await window.DeckGames.init();
+        if (deck.standalone) {
+          $('online').hidden = true;
+          say('Open Chess on Deck to play online. Here, two of you can share one board.');
+          view('menu');
+          return;
+        }
+        me = deck.player ? deck.player.playerId : null;
+        const on = window.DeckGames.on;
+        on('room', onRoom);
+        on('started', (next) => { room = next; view('play'); begin(); render(); });
+        on('state', ({ state }) => { if (local) return; game = state; receivedAt = Date.now(); if (room && room.status === 'playing') view('play'); render(); });
+        on('message', ({ from, data }) => arbiter(from, data));
+        on('ended', () => backToMenu('The room has closed.'));
+
+        view('menu');
+        if (deck.invite) online(() => mp().join(deck.invite));
+        else {
+          const current = await mp().room().catch(() => null);
+          if (current && current.status !== 'ended') { me = me || deck.player?.playerId; enter(current); }
+        }
+        window.DeckGames.ready();
+      })();
+    </script>
+  </body>
+</html>
