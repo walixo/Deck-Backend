@@ -88,6 +88,8 @@ export const createProductSchema = z
 
 export const updateProductSchema = z
   .object({
+    /* Renames it — allowed only until its first live sale (see updateProduct). */
+    productId: productIdField,
     name: z.string().trim().min(2).max(60),
     description: z.string().trim().max(240),
     price: priceField,

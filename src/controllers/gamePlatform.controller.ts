@@ -441,6 +441,7 @@ export async function getDeveloperView(req: Request, res: Response): Promise<voi
     GameProduct.find({ game: game._id }).sort({ active: -1, priceMinor: 1 }),
     salesSummary(game._id),
   ]);
+  const locked = await liveSold(products.map((product) => product._id));
 
   res.json({
     success: true,
@@ -467,7 +468,10 @@ export async function getDeveloperView(req: Request, res: Response): Promise<voi
             : null,
         },
       },
-      products: products.map(toProductResponse),
+      products: products.map((product) => ({
+        ...toProductResponse(product),
+        idLocked: locked.has(String(product._id)),
+      })),
       sales,
       feePercent: env.gameFeePercent,
     },
@@ -594,14 +598,54 @@ export async function updateProduct(req: Request, res: Response): Promise<void> 
   });
   if (!product) throw ApiError.notFound('We could not find that product');
 
+  const renamed = input.productId !== undefined && input.productId !== product.productId;
+  if (renamed) {
+    if ((await liveSold([product._id])).size) {
+      throw ApiError.conflict(
+        `Players have bought this as "${product.productId}", so its ID can’t change. Retire it and add a new product instead.`,
+      );
+    }
+    if (await GameProduct.exists({ game: game._id, productId: input.productId })) {
+      throw ApiError.conflict(`There is already a product called "${input.productId}"`);
+    }
+    product.productId = input.productId!;
+  }
   if (input.name !== undefined) product.name = input.name;
   if (input.description !== undefined) product.description = input.description;
   if (input.price !== undefined) product.priceMinor = Math.round(input.price * 100);
   if (input.type !== undefined) product.type = input.type;
   if (input.active !== undefined) product.active = input.active;
   await product.save();
+  /* Test purchases follow the new name, so the sandbox's ownership still adds up. */
+  if (renamed) {
+    await GamePurchase.updateMany(
+      { product: product._id, mode: 'test' },
+      { $set: { productId: product.productId } },
+    );
+  }
 
-  res.json({ success: true, data: toProductResponse(product) });
+  const locked = await liveSold([product._id]);
+  res.json({ success: true, data: { ...toProductResponse(product), idLocked: locked.size > 0 } });
+}
+
+/**
+ * Products players have bought in live mode, paid or still at checkout.
+ *
+ * A product's ID is the string a game's code, its server and its webhooks key
+ * on, and every purchase keeps a copy of it — "already owns this" checks, the
+ * player's purchase list and the developer's grants all match on it. Renaming
+ * a product after a real sale would split it in two, so its ID is fixed from
+ * then on. Matched by the product itself, not the string, so a rename cannot
+ * hide a sale.
+ */
+async function liveSold(productIds: mongoose.Types.ObjectId[]): Promise<Set<string>> {
+  if (!productIds.length) return new Set();
+  const sold = await GamePurchase.distinct('product', {
+    product: { $in: productIds },
+    mode: 'live',
+    status: { $in: ['paid', 'pending'] },
+  });
+  return new Set(sold.map(String));
 }
 
 /** A game's purchases, newest first, one mode at a time. */
