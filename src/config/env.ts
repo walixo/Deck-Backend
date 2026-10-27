@@ -208,6 +208,13 @@ export const env = {
   gameFeePercent: Math.min(50, Math.max(0, Number(process.env.GAME_FEE_PERCENT ?? 20))),
 
   /*
+   * Match: how long two people talk, and how long afterwards they may choose
+   * to swap LagosLife usernames. Settable so a test need not wait two minutes.
+   */
+  matchCallSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_CALL_SECONDS ?? 120))),
+  matchShareSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_SHARE_SECONDS ?? 90))),
+
+  /*
    * How long a launch must wait before it can ship a new version.
    *
    * Every release earns a fresh day on the board with its votes reset, which is

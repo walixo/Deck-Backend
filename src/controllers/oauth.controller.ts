@@ -16,6 +16,8 @@ import { signToken } from '../utils/jwt';
 /** Ten minutes: long enough to read a consent screen, short enough to matter. */
 const STATE_COOKIE = 'deck_oauth_state';
 const STATE_COOKIE_MAX_AGE = 10 * 60 * 1000;
+/** Which of Deck's sites to land on afterwards — Match signs in here too. */
+const RETURN_COOKIE = 'deck_oauth_return';
 
 function parseProvider(value: string): OAuthProvider {
   const provider = OAUTH_PROVIDERS.find((known) => known === value);
@@ -40,8 +42,14 @@ function readCookie(req: Request, name: string): string | undefined {
     ?.slice(name.length + 1);
 }
 
-/** Where the browser is sent when the flow ends, well or badly. */
-function clientOrigin(): string {
+/**
+ * Where the browser is sent when the flow ends, well or badly: the Deck site
+ * that started it, if it is one of Deck's own origins, else the main site.
+ * Only origins in CLIENT_ORIGIN qualify, so the token can never be handed to
+ * an address an attacker chose.
+ */
+function clientOrigin(requested?: string): string {
+  if (requested && env.clientOrigins.includes(requested)) return requested;
   return env.clientOrigins[0] ?? 'http://localhost:5173';
 }
 
@@ -78,6 +86,18 @@ export function startOAuth(req: Request, res: Response): void {
     maxAge: STATE_COOKIE_MAX_AGE,
     path: '/api/auth/oauth',
   });
+  const back = typeof req.query.return === 'string' ? req.query.return : '';
+  if (back && env.clientOrigins.includes(back)) {
+    res.cookie(RETURN_COOKIE, encodeURIComponent(back), {
+      httpOnly: true,
+      secure: env.isProduction,
+      sameSite: 'lax',
+      maxAge: STATE_COOKIE_MAX_AGE,
+      path: '/api/auth/oauth',
+    });
+  } else {
+    res.clearCookie(RETURN_COOKIE, { path: '/api/auth/oauth' });
+  }
 
   res.redirect(authorizeUrl(req, provider, state));
 }
@@ -95,12 +115,14 @@ export function startOAuth(req: Request, res: Response): void {
  * links to next as a Referer; a fragment never leaves the browser.
  */
 export async function oauthCallback(req: Request, res: Response): Promise<void> {
-  const origin = clientOrigin();
+  const back = readCookie(req, RETURN_COOKIE);
+  const origin = clientOrigin(back ? decodeURIComponent(back) : undefined);
   const fail = (message: string): void => {
     res.redirect(`${origin}/login?error=${encodeURIComponent(message)}`);
   };
 
   res.clearCookie(STATE_COOKIE, { path: '/api/auth/oauth' });
+  res.clearCookie(RETURN_COOKIE, { path: '/api/auth/oauth' });
 
   let provider: OAuthProvider;
   try {

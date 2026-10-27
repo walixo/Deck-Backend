@@ -18,6 +18,7 @@ import gameRoutes from './game.routes';
 import itemRoutes from './item.routes';
 import postRoutes from './post.routes';
 import leaderboardRoutes from './leaderboard.routes';
+import matchRoutes from './match.routes';
 import merchRoutes from './merch.routes';
 import notificationRoutes from './notification.routes';
 import orderRoutes from './order.routes';
@@ -40,6 +41,7 @@ router.get('/stats', asyncHandler(getStats));
 router.get('/rates', asyncHandler(getExchangeRates));
 
 router.use('/auth', authRoutes);
+router.use('/match', matchRoutes);
 router.use('/admin', adminRoutes);
 router.use('/ads', adRoutes);
 router.use('/acquisitions', acquisitionRoutes);
