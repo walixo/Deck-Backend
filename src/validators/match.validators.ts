@@ -37,7 +37,33 @@ export const matchReportSchema = z
   })
   .strict();
 
+export const matchPushSchema = z
+  .object({
+    endpoint: z
+      .string()
+      .url()
+      .max(1000)
+      .refine((value) => value.startsWith('https://'), 'Push endpoints use https'),
+    keys: z
+      .object({ p256dh: z.string().min(10).max(200), auth: z.string().min(8).max(100) })
+      .strict(),
+    expirationTime: z.number().nullable().optional(),
+  })
+  .strict();
+
+export const matchSectionRequestSchema = z
+  .object({ note: z.string().trim().max(300).optional() })
+  .strict();
+
+export const matchSectionSchema = z.object({ gender: z.enum(MATCH_GENDERS) }).strict();
+
+export const matchPauseSchema = z.object({ days: z.number().int().min(1).max(365) }).strict();
+
 export type CreateMatchProfileInput = z.infer<typeof createMatchProfileSchema>;
 export type UpdateMatchProfileInput = z.infer<typeof updateMatchProfileSchema>;
 export type MatchSignalInput = z.infer<typeof matchSignalSchema>;
 export type MatchReportInput = z.infer<typeof matchReportSchema>;
+export type MatchPushInput = z.infer<typeof matchPushSchema>;
+export type MatchSectionRequestInput = z.infer<typeof matchSectionRequestSchema>;
+export type MatchSectionInput = z.infer<typeof matchSectionSchema>;
+export type MatchPauseInput = z.infer<typeof matchPauseSchema>;

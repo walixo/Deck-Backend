@@ -2,8 +2,9 @@ import { randomBytes } from 'node:crypto';
 import type { Response } from 'express';
 import { env } from '../config/env';
 import { MatchCall, type MatchEndReason } from '../models/MatchCall';
-import type { MatchGender } from '../models/MatchProfile';
+import { MatchDay, type MatchGender } from '../models/MatchProfile';
 import { ApiError } from '../utils/ApiError';
+import { hoursAt, matchDay } from './matchHours';
 
 /**
  * Match, live: who is online, who is waiting, who is talking to whom.
@@ -19,6 +20,11 @@ import { ApiError } from '../utils/ApiError';
  * clock: two minutes from the moment both say they can hear each other, after
  * which it ends the call for both. Only a call that ran out its time opens a
  * share window, and LagosLife usernames are revealed only if both press share.
+ *
+ * Match keeps evening hours (see `matchHours.ts`): nobody joins a line while
+ * it is closed, the lines empty at closing time, and calls already running
+ * finish. Until enough people are online, everyone sees "busy" or "quiet"
+ * rather than a small number (`publicView`); staff see the real figures.
  *
  * Like the multiplayer hub, this lives in one process's memory: Deck runs one
  * instance. A person whose stream drops has a short grace to reconnect before
@@ -54,6 +60,9 @@ interface Call {
   shareUntil: number;
   shares: Map<string, string>;
   revealed: boolean;
+  /** Who pressed +1 minute. Both, once per call, adds a minute. */
+  extendVotes: Set<string>;
+  extended: boolean;
   timer: NodeJS.Timeout | null;
 }
 
@@ -66,6 +75,7 @@ const GRACE_MS = 10_000;
 /** The same two people are not matched again within this long. */
 const REMATCH_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 15_000;
+const EXTRA_MS = 60_000;
 
 const people = new Map<string, Person>();
 const queues: Record<MatchGender, string[]> = { male: [], female: [] };
@@ -94,14 +104,61 @@ export function counts() {
   return { total: male + female, male, female };
 }
 
+/* What browsers need to subscribe to pings; null when pings are not set up. */
+const pushKey = env.vapid.publicKey && env.vapid.privateKey ? env.vapid.publicKey : null;
+
+/**
+ * What everyone may see: the hours, whether anyone is on each side, and the
+ * real numbers only once there are enough of them to encourage rather than
+ * put off.
+ */
+export function publicView() {
+  const now = counts();
+  return {
+    hours: hoursAt(),
+    live: now.total >= env.matchCountsFrom ? now : null,
+    available: { male: now.male > 0, female: now.female > 0 },
+    pushKey,
+  };
+}
+
+/* The busiest moment of each evening, for staff. Written at most every 10s. */
+let peakTimer: NodeJS.Timeout | null = null;
+function notePeak(): void {
+  if (peakTimer) return;
+  peakTimer = setTimeout(() => {
+    peakTimer = null;
+    const now = counts();
+    void MatchDay.updateOne(
+      { day: matchDay() },
+      { $max: { peakOnline: now.total, peakMale: now.male, peakFemale: now.female } },
+      { upsert: true },
+    ).catch(() => undefined);
+  }, 10_000);
+}
+
+/* Someone arrived: a listener (the pinger) may tell people who are away. */
+let arrivalListener: ((gender: MatchGender) => void) | null = null;
+export function onArrival(listener: (gender: MatchGender) => void): void {
+  arrivalListener = listener;
+}
+function arrived(gender: MatchGender): void {
+  if (hoursAt().open) arrivalListener?.(gender);
+}
+
+export function isOnline(userId: string): boolean {
+  return Boolean(people.get(userId)?.lines.size);
+}
+
 /* Online counts change often; everyone hears at most every 1.5s. */
 let onlineTimer: NodeJS.Timeout | null = null;
 function announceOnline(): void {
   if (onlineTimer) return;
   onlineTimer = setTimeout(() => {
     onlineTimer = null;
-    const now = counts();
-    for (const person of people.values()) for (const res of person.lines) write(res, 'online', now);
+    const view = publicView();
+    for (const person of people.values())
+      for (const res of person.lines) write(res, 'online', view);
   }, 1500);
 }
 
@@ -109,10 +166,7 @@ function announceQueue(): void {
   for (const gender of ['male', 'female'] as const) {
     const other = gender === 'male' ? 'female' : 'male';
     queues[gender].forEach((userId, index) =>
-      tell(userId, 'queue', {
-        position: index + 1,
-        waiting: { [gender]: queues[gender].length, [other]: queues[other].length },
-      }),
+      tell(userId, 'queue', { position: index + 1, otherWaiting: queues[other].length > 0 }),
     );
   }
 }
@@ -121,7 +175,7 @@ function announceQueue(): void {
 function snapshot(person: Person) {
   const call = person.callId ? calls.get(person.callId) : undefined;
   return {
-    online: counts(),
+    online: publicView(),
     state: person.state,
     position: person.state === 'waiting' ? queues[person.gender].indexOf(person.userId) + 1 : null,
     call:
@@ -131,6 +185,7 @@ function snapshot(person: Person) {
             caller: call.caller === person.userId,
             startedAt: call.startedAt,
             endsAt: call.endsAt,
+            extended: call.extended,
           }
         : null,
     serverNow: Date.now(),
@@ -174,9 +229,12 @@ export function attach(presence: Presence, res: Response): void {
     people.set(presence.userId, person);
   }
   update(presence);
+  const fresh = person.lines.size === 0;
   person.lines.add(res);
   write(res, 'hello', snapshot(person));
   announceOnline();
+  notePeak();
+  if (fresh) arrived(person.gender);
 
   const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), HEARTBEAT_MS);
   res.on('close', () => {
@@ -212,6 +270,20 @@ function depart(userId: string): void {
   announceQueue();
 }
 
+/**
+ * Takes someone out at once, quietly — out of any line or call, streams
+ * closed. Their page reconnects by itself and comes back as they are now
+ * (after staff switch their section, say).
+ */
+export function reset(userId: string): void {
+  const person = people.get(userId);
+  if (!person) return;
+  if (person.goneTimer) clearTimeout(person.goneTimer);
+  const lines = [...person.lines];
+  depart(userId);
+  for (const res of lines) res.end();
+}
+
 /** Removes someone from the hub at once and closes their streams — a ban. */
 export function kick(userId: string): void {
   const person = people.get(userId);
@@ -238,10 +310,17 @@ function unqueue(person: Person): void {
 export function enqueue(userId: string): { position: number } {
   const person = present(userId);
   if (person.state === 'calling') throw ApiError.conflict('You are in a call');
+  if (!hoursAt().open) {
+    const hour = env.matchHours.open % 12 || 12;
+    throw ApiError.conflict(
+      `Match is closed — it opens at ${hour}${env.matchHours.open < 12 ? 'am' : 'pm'}`,
+    );
+  }
   if (person.state !== 'waiting') {
     person.state = 'waiting';
     person.waitingSince = Date.now();
     queues[person.gender].push(userId);
+    arrived(person.gender);
   }
   pairUp();
   announceQueue();
@@ -292,9 +371,15 @@ function begin(man: Person, woman: Person): void {
     shareUntil: 0,
     shares: new Map(),
     revealed: false,
+    extendVotes: new Set(),
+    extended: false,
     timer: null,
   };
   calls.set(call.id, call);
+  const waits = {
+    male: call.matchedAt - man.waitingSince,
+    female: call.matchedAt - woman.waitingSince,
+  };
   for (const person of [man, woman]) {
     unqueue(person);
     person.state = 'calling';
@@ -310,6 +395,8 @@ function begin(man: Person, woman: Person): void {
     male: man.userId,
     female: woman.userId,
     matchedAt: new Date(call.matchedAt),
+    maleWaitMs: waits.male,
+    femaleWaitMs: waits.female,
   }).catch(() => undefined);
 }
 
@@ -343,9 +430,16 @@ export function connected(userId: string, callId: string): void {
   call.endsAt = call.startedAt + CALL_MS;
   call.timer = setTimeout(() => end(call, 'time'), CALL_MS);
   for (const id of [call.male, call.female]) {
-    tell(id, 'started', { callId, startedAt: call.startedAt, endsAt: call.endsAt, serverNow: Date.now() });
+    tell(id, 'started', {
+      callId,
+      startedAt: call.startedAt,
+      endsAt: call.endsAt,
+      serverNow: Date.now(),
+    });
   }
-  void MatchCall.updateOne({ callId }, { startedAt: new Date(call.startedAt) }).catch(() => undefined);
+  void MatchCall.updateOne({ callId }, { startedAt: new Date(call.startedAt) }).catch(
+    () => undefined,
+  );
 }
 
 function end(call: Call, reason: MatchEndReason, by?: string): void {
@@ -369,12 +463,40 @@ function end(call: Call, reason: MatchEndReason, by?: string): void {
       serverNow: Date.now(),
     });
   }
-  void MatchCall.updateOne({ callId: call.id }, { endedAt: new Date(), endReason: reason }).catch(
-    () => undefined,
-  );
+  void MatchCall.updateOne(
+    { callId: call.id },
+    { endedAt: new Date(), endReason: reason, endedBy: by ?? null },
+  ).catch(() => undefined);
   /* Kept a little past the share window, then forgotten. */
   setTimeout(() => calls.delete(call.id), SHARE_MS + 10_000);
   announceOnline();
+}
+
+/**
+ * Presses +1 minute. When both have, the call gets one more minute — once.
+ * Each side hears who has pressed, so the other can say yes too.
+ */
+export function extend(userId: string, callId: string): void {
+  const call = inCall(userId, callId);
+  if (call.state !== 'live' || call.extended) throw ApiError.conflict('No more time to add');
+  call.extendVotes.add(userId);
+  for (const id of [call.male, call.female]) {
+    tell(id, 'extend', {
+      callId,
+      mine: call.extendVotes.has(id),
+      theirs: call.extendVotes.has(partnerOf(call, id)),
+    });
+  }
+  if (call.extendVotes.size < 2) return;
+
+  call.extended = true;
+  call.endsAt = (call.endsAt ?? Date.now()) + EXTRA_MS;
+  if (call.timer) clearTimeout(call.timer);
+  call.timer = setTimeout(() => end(call, 'time'), call.endsAt - Date.now());
+  for (const id of [call.male, call.female]) {
+    tell(id, 'extended', { callId, endsAt: call.endsAt, serverNow: Date.now() });
+  }
+  void MatchCall.updateOne({ callId }, { extended: true }).catch(() => undefined);
 }
 
 export function leave(userId: string, callId: string, reason: MatchEndReason = 'left'): void {
@@ -392,7 +514,8 @@ export function partner(userId: string, callId: string): string {
  */
 export function share(userId: string, callId: string, handle: string): { revealed: boolean } {
   const call = inCall(userId, callId);
-  if (call.endReason !== 'time') throw ApiError.conflict('You can share once your two minutes are up');
+  if (call.endReason !== 'time')
+    throw ApiError.conflict('You can share once your two minutes are up');
   if (Date.now() > call.shareUntil) throw ApiError.conflict('The time to share has passed');
   if (!handle) throw ApiError.badRequest('Add your LagosLife username first');
   call.shares.set(userId, handle);
@@ -404,6 +527,29 @@ export function share(userId: string, callId: string, handle: string): { reveale
   }
   return { revealed: call.revealed };
 }
+
+/*
+ * Opening and closing time. At closing the lines empty — anyone mid-call
+ * finishes their call — and everyone hears the new hours.
+ */
+let wasOpen = hoursAt().open;
+setInterval(() => {
+  const open = hoursAt().open;
+  if (open === wasOpen) return;
+  wasOpen = open;
+  if (!open) {
+    for (const gender of ['male', 'female'] as const) {
+      for (const userId of queues[gender]) {
+        const person = people.get(userId);
+        if (person) person.state = 'idle';
+        tell(userId, 'closed', {});
+      }
+      queues[gender] = [];
+    }
+  }
+  const view = publicView();
+  for (const person of people.values()) for (const res of person.lines) write(res, 'online', view);
+}, 15_000).unref();
 
 /** For tests: the hub back to empty. */
 export function resetMatchHub(): void {

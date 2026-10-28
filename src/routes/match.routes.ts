@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   connected,
   createMe,
+  extend,
   getMe,
   joinQueue,
   leaveCall,
@@ -9,9 +10,12 @@ import {
   matches,
   online,
   report,
+  requestSection,
   share,
   signal,
   stream,
+  subscribePush,
+  unsubscribePush,
   updateMe,
 } from '../controllers/match.controller';
 import { requireAuth } from '../middleware/auth';
@@ -20,7 +24,9 @@ import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import {
   createMatchProfileSchema,
+  matchPushSchema,
   matchReportSchema,
+  matchSectionRequestSchema,
   matchSignalSchema,
   updateMatchProfileSchema,
 } from '../validators/match.validators';
@@ -39,12 +45,22 @@ router.get('/online', online);
 router.get('/me', auth, asyncHandler(getMe));
 router.post('/me', auth, validate(createMatchProfileSchema), asyncHandler(createMe));
 router.patch('/me', auth, validate(updateMatchProfileSchema), asyncHandler(updateMe));
+router.post(
+  '/me/section-request',
+  reportLimiter,
+  auth,
+  validate(matchSectionRequestSchema),
+  asyncHandler(requestSection),
+);
+router.post('/push', auth, validate(matchPushSchema), asyncHandler(subscribePush));
+router.delete('/push', auth, asyncHandler(unsubscribePush));
 router.get('/matches', auth, asyncHandler(matches));
 router.get('/stream', auth, asyncHandler(stream));
 router.post('/queue', queueLimiter, auth, asyncHandler(joinQueue));
 router.delete('/queue', auth, leaveQueue);
 router.post('/calls/:callId/signal', signalLimiter, auth, validate(matchSignalSchema), signal);
 router.post('/calls/:callId/connected', auth, connected);
+router.post('/calls/:callId/extend', auth, extend);
 router.post('/calls/:callId/leave', auth, leaveCall);
 router.post('/calls/:callId/share', auth, asyncHandler(share));
 router.post(

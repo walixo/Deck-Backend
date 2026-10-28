@@ -22,6 +22,13 @@ export interface IMatchCall extends Document {
   startedAt: Date | null;
   endedAt: Date | null;
   endReason: MatchEndReason | null;
+  /** Who ended it, when one person did (left or reported). */
+  endedBy: mongoose.Types.ObjectId | null;
+  /** How long each had waited in line before this match. */
+  maleWaitMs: number;
+  femaleWaitMs: number;
+  /** Both pressed +1 minute. */
+  extended: boolean;
   /** Who pressed share. Usernames are revealed only when both did. */
   sharedBy: mongoose.Types.ObjectId[];
   revealedAt: Date | null;
@@ -38,11 +45,16 @@ const callSchema = new Schema<IMatchCall>(
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
     endReason: { type: String, enum: MATCH_END_REASONS, default: null },
+    endedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    maleWaitMs: { type: Number, default: 0 },
+    femaleWaitMs: { type: Number, default: 0 },
+    extended: { type: Boolean, default: false },
     sharedBy: { type: [Schema.Types.ObjectId], default: [] },
     revealedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
+callSchema.index({ matchedAt: -1 });
 
 export const MatchCall: Model<IMatchCall> =
   mongoose.models.MatchCall ?? mongoose.model<IMatchCall>('MatchCall', callSchema);
@@ -52,6 +64,10 @@ export const MatchCall: Model<IMatchCall> =
 export const MATCH_REPORT_REASONS = ['abusive', 'sexual', 'underage', 'spam', 'other'] as const;
 export type MatchReportReason = (typeof MATCH_REPORT_REASONS)[number];
 
+/** Open until staff look; dismissed reports stop counting towards a pause. */
+export const MATCH_REPORT_STATUSES = ['open', 'actioned', 'dismissed'] as const;
+export type MatchReportStatus = (typeof MATCH_REPORT_STATUSES)[number];
+
 export interface IMatchReport extends Document {
   _id: mongoose.Types.ObjectId;
   callId: string;
@@ -59,6 +75,8 @@ export interface IMatchReport extends Document {
   reported: mongoose.Types.ObjectId;
   reason: MatchReportReason;
   note: string;
+  status: MatchReportStatus;
+  reviewedAt: Date | null;
   createdAt: Date;
 }
 
@@ -69,6 +87,8 @@ const reportSchema = new Schema<IMatchReport>(
     reported: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     reason: { type: String, enum: MATCH_REPORT_REASONS, required: true },
     note: { type: String, default: '', maxlength: 500 },
+    status: { type: String, enum: MATCH_REPORT_STATUSES, default: 'open', index: true },
+    reviewedAt: { type: Date, default: null },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

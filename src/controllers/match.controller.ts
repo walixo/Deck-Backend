@@ -1,11 +1,14 @@
 import type { Request, Response } from 'express';
 import { MatchCall, MatchReport } from '../models/MatchCall';
-import { MatchProfile, type IMatchProfile } from '../models/MatchProfile';
+import { MatchProfile, MatchPush, type IMatchProfile } from '../models/MatchProfile';
 import * as hub from '../services/matchHub';
+import { pushPublicKey } from '../services/matchPing';
 import { ApiError } from '../utils/ApiError';
 import type {
   CreateMatchProfileInput,
+  MatchPushInput,
   MatchReportInput,
+  MatchSectionRequestInput,
   MatchSignalInput,
   UpdateMatchProfileInput,
 } from '../validators/match.validators';
@@ -28,11 +31,13 @@ const SIGNAL_MAX_BYTES = 16 * 1024;
 const banned = (profile: IMatchProfile) =>
   Boolean(profile.bannedUntil && profile.bannedUntil.getTime() > Date.now());
 
-function toProfileResponse(profile: IMatchProfile) {
+function toProfileResponse(profile: IMatchProfile, pings = false) {
   return {
     gender: profile.gender,
     lagosLife: profile.lagosLife,
     bannedUntil: banned(profile) ? profile.bannedUntil : null,
+    sectionRequested: Boolean(profile.sectionRequest),
+    pings,
   };
 }
 
@@ -51,14 +56,51 @@ async function ready(req: Request): Promise<IMatchProfile> {
   return profile;
 }
 
-/** How many people are on Match now. Public: the landing page shows it. */
+/**
+ * Whether Match is open and whether anyone is on each side — numbers only once
+ * there are enough of them. Public: the landing page shows it.
+ */
 export function online(_req: Request, res: Response): void {
-  res.json({ success: true, data: hub.counts() });
+  res.json({ success: true, data: hub.publicView() });
 }
 
 export async function getMe(req: Request, res: Response): Promise<void> {
   const profile = await MatchProfile.findOne({ user: req.user!._id });
-  res.json({ success: true, data: profile ? toProfileResponse(profile) : null });
+  const pings = profile ? Boolean(await MatchPush.exists({ user: req.user!._id })) : false;
+  res.json({ success: true, data: profile ? toProfileResponse(profile, pings) : null });
+}
+
+/** Turns on pings for this browser: its push subscription, from the Push API. */
+export async function subscribePush(req: Request, res: Response): Promise<void> {
+  const input = req.body as MatchPushInput;
+  if (!pushPublicKey()) throw ApiError.badRequest('Pings are not available right now');
+  await MatchPush.findOneAndUpdate(
+    { endpoint: input.endpoint },
+    { user: req.user!._id, endpoint: input.endpoint, keys: input.keys },
+    { upsert: true },
+  );
+  res.json({ success: true, data: { pings: true } });
+}
+
+/** Turns pings off — for this browser, or everywhere if no endpoint is given. */
+export async function unsubscribePush(req: Request, res: Response): Promise<void> {
+  const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : null;
+  await MatchPush.deleteMany(
+    endpoint ? { user: req.user!._id, endpoint } : { user: req.user!._id },
+  );
+  res.json({ success: true, data: { pings: false } });
+}
+
+/** "I chose the wrong section": a request for staff, who can switch it. */
+export async function requestSection(req: Request, res: Response): Promise<void> {
+  const input = req.body as MatchSectionRequestInput;
+  const profile = await MatchProfile.findOneAndUpdate(
+    { user: req.user!._id },
+    { sectionRequest: { note: input.note ?? '', at: new Date() } },
+    { new: true },
+  );
+  if (!profile) throw ApiError.badRequest('Set up Match first');
+  res.json({ success: true, data: toProfileResponse(profile) });
 }
 
 /** First visit: gender and the adult check. */
@@ -128,6 +170,11 @@ export function connected(req: Request, res: Response): void {
   res.json({ success: true, data: { ok: true } });
 }
 
+export function extend(req: Request, res: Response): void {
+  hub.extend(String(req.user!._id), String(req.params.callId));
+  res.json({ success: true, data: { ok: true } });
+}
+
 export function leaveCall(req: Request, res: Response): void {
   hub.leave(String(req.user!._id), String(req.params.callId));
   res.json({ success: true, data: { left: true } });
@@ -183,6 +230,7 @@ export async function report(req: Request, res: Response): Promise<void> {
 
   const reporters = await MatchReport.distinct('reporter', {
     reported: other,
+    status: { $ne: 'dismissed' },
     createdAt: { $gt: new Date(Date.now() - REPORT_WINDOW_MS) },
   });
   if (reporters.length >= REPORTS_TO_BAN) {

@@ -213,6 +213,28 @@ export const env = {
    */
   matchCallSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_CALL_SECONDS ?? 120))),
   matchShareSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_SHARE_SECONDS ?? 90))),
+  /*
+   * Match is open in the evening, Lagos time: "20-22" is 8pm to 10pm at
+   * GMT+1. MATCH_ALWAYS_OPEN=true lifts the hours, for development and tests.
+   */
+  matchHours: (() => {
+    const [open, close] = (process.env.MATCH_HOURS ?? '20-22').split('-').map(Number);
+    return { open: open ?? 20, close: close ?? 22 };
+  })(),
+  matchUtcOffset: Number(process.env.MATCH_UTC_OFFSET ?? 1),
+  matchAlwaysOpen: process.env.MATCH_ALWAYS_OPEN === 'true',
+  /* Below this many people online, Match says "busy" or "quiet" instead of a number. */
+  matchCountsFrom: Math.max(0, Number(process.env.MATCH_COUNTS_FROM ?? 20)),
+  /*
+   * Web Push, for "ping me when someone's free". Generate once with
+   * `npx web-push generate-vapid-keys`; the private key is a secret. Without
+   * both keys the ping option simply does not appear.
+   */
+  vapid: {
+    publicKey: process.env.VAPID_PUBLIC_KEY ?? '',
+    privateKey: process.env.VAPID_PRIVATE_KEY ?? '',
+    subject: process.env.VAPID_SUBJECT ?? 'mailto:hello@onedeck.africa',
+  },
 
   /*
    * How long a launch must wait before it can ship a new version.

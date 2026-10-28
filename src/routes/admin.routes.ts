@@ -19,6 +19,17 @@ import { listCustomQueue, reviewCustomDesign } from '../controllers/custom.contr
 import { rescheduleItem, setFutureGen } from '../controllers/item.controller';
 import { createPost, deletePost, listAllPosts, updatePost } from '../controllers/post.controller';
 import { listAllGames, reviewGame } from '../controllers/game.controller';
+import {
+  declineMatchSection,
+  dismissMatchReports,
+  matchReports,
+  matchSectionRequests,
+  matchStats,
+  pauseMatchUser,
+  setMatchSection,
+  unpauseMatchUser,
+} from '../controllers/matchAdmin.controller';
+import { matchPauseSchema, matchSectionSchema } from '../validators/match.validators';
 import { requireAuth } from '../middleware/auth';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { listAgentGamesForReview, reviewAgentGame } from '../controllers/agentGame.controller';
@@ -106,6 +117,24 @@ router.patch(
   asyncHandler(reviewAgentGame),
 );
 router.patch('/games/:id/review', validate(reviewGameSchema), asyncHandler(reviewGame));
+
+/* Match: the numbers, reports and section requests. */
+router.get('/match/stats', asyncHandler(matchStats));
+router.get('/match/reports', asyncHandler(matchReports));
+router.get('/match/section-requests', asyncHandler(matchSectionRequests));
+router.post(
+  '/match/people/:userId/pause',
+  validate(matchPauseSchema),
+  asyncHandler(pauseMatchUser),
+);
+router.post('/match/people/:userId/unpause', asyncHandler(unpauseMatchUser));
+router.post('/match/people/:userId/dismiss', asyncHandler(dismissMatchReports));
+router.patch(
+  '/match/people/:userId/section',
+  validate(matchSectionSchema),
+  asyncHandler(setMatchSection),
+);
+router.delete('/match/people/:userId/section-request', asyncHandler(declineMatchSection));
 
 router.get('/posts', asyncHandler(listAllPosts));
 router.post('/posts', validate(createPostSchema), asyncHandler(createPost));
