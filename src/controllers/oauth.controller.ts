@@ -43,6 +43,23 @@ function readCookie(req: Request, name: string): string | undefined {
 }
 
 /**
+ * The site a sign-in asked to come back to, from its cookie. Decoded until it
+ * stops changing (at most twice), so a value written doubly encoded by an
+ * earlier release still reads as the plain origin it was.
+ */
+function returnTo(raw: string | undefined): string | undefined {
+  let value = raw;
+  for (let i = 0; value && i < 2 && value.includes('%'); i += 1) {
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      return undefined;
+    }
+  }
+  return value;
+}
+
+/**
  * Where the browser is sent when the flow ends, well or badly: the Deck site
  * that started it, if it is one of Deck's own origins, else the main site.
  * Only origins in CLIENT_ORIGIN qualify, so the token can never be handed to
@@ -88,7 +105,8 @@ export function startOAuth(req: Request, res: Response): void {
   });
   const back = typeof req.query.return === 'string' ? req.query.return : '';
   if (back && env.clientOrigins.includes(back)) {
-    res.cookie(RETURN_COOKIE, encodeURIComponent(back), {
+    /* Express URL-encodes cookie values itself; encoding here too would wrap it twice. */
+    res.cookie(RETURN_COOKIE, back, {
       httpOnly: true,
       secure: env.isProduction,
       sameSite: 'lax',
@@ -115,8 +133,7 @@ export function startOAuth(req: Request, res: Response): void {
  * links to next as a Referer; a fragment never leaves the browser.
  */
 export async function oauthCallback(req: Request, res: Response): Promise<void> {
-  const back = readCookie(req, RETURN_COOKIE);
-  const origin = clientOrigin(back ? decodeURIComponent(back) : undefined);
+  const origin = clientOrigin(returnTo(readCookie(req, RETURN_COOKIE)));
   const fail = (message: string): void => {
     res.redirect(`${origin}/login?error=${encodeURIComponent(message)}`);
   };
