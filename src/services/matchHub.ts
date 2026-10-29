@@ -1,3 +1,4 @@
+import { pushPublicKey } from './vapid';
 import { randomBytes } from 'node:crypto';
 import type { Response } from 'express';
 import { env } from '../config/env';
@@ -117,7 +118,7 @@ export function counts() {
 }
 
 /* What browsers need to subscribe to pings; null when pings are not set up. */
-const pushKey = env.vapid.publicKey && env.vapid.privateKey ? env.vapid.publicKey : null;
+const pushKey = pushPublicKey();
 
 /**
  * What everyone may see: the hours, whether anyone is on each side, and the

@@ -1,8 +1,10 @@
 import webpush from 'web-push';
-import { env } from '../config/env';
 import { MatchProfile, MatchPush, type MatchGender } from '../models/MatchProfile';
 import { hoursAt } from './matchHours';
 import { isOnline, onArrival } from './matchHub';
+import { pushPublicKey } from './vapid';
+
+export { pushPublicKey };
 
 /**
  * "Ping me when someone's free": a browser push notification, sent when
@@ -14,27 +16,6 @@ import { isOnline, onArrival } from './matchHub';
  * Uses the Web Push standard with Deck's own VAPID keys — no third party
  * account — and does nothing if the keys are not configured.
  */
-
-/* A bare email is accepted as the subject; web-push wants it as a mailto: URL. */
-const subject = /^(mailto:|https?:)/.test(env.vapid.subject)
-  ? env.vapid.subject
-  : `mailto:${env.vapid.subject}`;
-
-/* A mistyped key must not stop the server starting: pings switch off instead. */
-function configure(): boolean {
-  if (!env.vapid.publicKey || !env.vapid.privateKey) return false;
-  try {
-    webpush.setVapidDetails(subject, env.vapid.publicKey, env.vapid.privateKey);
-    return true;
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error(`[match] pings are off — check the VAPID settings: ${(error as Error).message}`);
-    return false;
-  }
-}
-const ready = configure();
-
-export const pushPublicKey = () => (ready ? env.vapid.publicKey : null);
 
 /* One sweep per side at a time, and not more than once a minute. */
 const lastSweep: Record<MatchGender, number> = { male: 0, female: 0 };
@@ -97,7 +78,7 @@ export async function pingFor(arrived: MatchGender): Promise<void> {
 
 /** Starts listening for arrivals. Called once when the server starts. */
 export function startMatchPings(): void {
-  if (!ready) return;
+  if (!pushPublicKey()) return;
   onArrival((gender) => {
     void pingFor(gender).catch(() => undefined);
   });
