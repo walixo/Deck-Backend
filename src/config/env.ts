@@ -223,6 +223,13 @@ export const env = {
   })(),
   matchUtcOffset: Number(process.env.MATCH_UTC_OFFSET ?? 1),
   matchAlwaysOpen: process.env.MATCH_ALWAYS_OPEN === 'true',
+  /* Match+ members keep talking this many hours past closing (10pm to midnight). */
+  matchLateHours: Math.min(6, Math.max(0, Number(process.env.MATCH_LATE_HOURS ?? 2))),
+  /*
+   * Where Match lives, for the top-up checkout to send people back to. Bachs
+   * needs a public address, so a local top-up never reaches checkout anyway.
+   */
+  matchUrl: (process.env.MATCH_URL ?? 'https://match.onedeck.africa').replace(/\/$/, ''),
   /* Below this many people online, Match says "busy" or "quiet" instead of a number. */
   matchCountsFrom: Math.max(0, Number(process.env.MATCH_COUNTS_FROM ?? 20)),
   /*

@@ -3,6 +3,7 @@ import { connectDatabase, disconnectDatabase } from './config/db';
 import { env } from './config/env';
 import { checkBachsKey } from './services/bachs';
 import { assertSigningKey } from './services/gameIdKeys';
+import { startNights } from './services/matchNights';
 import { startMatchPings } from './services/matchPing';
 import { startScheduler, stopScheduler } from './services/scheduler';
 
@@ -32,6 +33,7 @@ async function bootstrap(): Promise<void> {
      the app never start sweeping orders or sending transfers by accident. */
   startScheduler();
   startMatchPings();
+  startNights();
 
   /* In the background: a slow provider must not hold up the server starting. */
   void checkBachsKey();

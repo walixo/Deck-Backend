@@ -8,8 +8,9 @@ import { isOnline, onArrival } from './matchHub';
  * "Ping me when someone's free": a browser push notification, sent when
  * someone on the other side arrives on Match during opening hours.
  *
- * At most once an evening per person, never to someone already on Match, and
- * only to people who turned it on (which needs their browser's permission).
+ * At most once an evening per person (every half hour for Match+), never to
+ * someone already on Match, and only to people who turned it on (which needs
+ * their browser's permission).
  * Uses the Web Push standard with Deck's own VAPID keys — no third party
  * account — and does nothing if the keys are not configured.
  */
@@ -38,6 +39,7 @@ export const pushPublicKey = () => (ready ? env.vapid.publicKey : null);
 /* One sweep per side at a time, and not more than once a minute. */
 const lastSweep: Record<MatchGender, number> = { male: 0, female: 0 };
 const SWEEP_MS = 60_000;
+const PLUS_PING_GAP_MS = 30 * 60_000;
 
 /** Exported for tests; arrivals call it through `startMatchPings`. */
 export async function pingFor(arrived: MatchGender): Promise<void> {
@@ -53,7 +55,14 @@ export async function pingFor(arrived: MatchGender): Promise<void> {
     gender: wanted,
     $and: [
       { $or: [{ bannedUntil: null }, { bannedUntil: { $lt: new Date() } }] },
-      { $or: [{ pingedAt: null }, { pingedAt: { $lt: tonight } }] },
+      {
+        $or: [
+          { pingedAt: null },
+          { pingedAt: { $lt: tonight } },
+          /* Match+: no once-a-night limit, but never more than every half hour. */
+          { plusUntil: { $gt: new Date() }, pingedAt: { $lt: new Date(now - PLUS_PING_GAP_MS) } },
+        ],
+      },
     ],
   })
     .select('user')

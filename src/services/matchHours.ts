@@ -30,6 +30,31 @@ export function hoursAt(now = Date.now()): MatchHours {
   return { open: false, opensAt: opens + DAY, closesAt: closes + DAY };
 }
 
+export interface MatchLate {
+  /** Inside the Match+ hour after closing. */
+  open: boolean;
+  /** When the current, or next, late window ends. */
+  closesAt: number;
+}
+
+/**
+ * The Match+ late window: from closing time for `matchLateHours` (10pm to
+ * midnight by default). Only members may join the line in it.
+ */
+export function lateAt(now = Date.now()): MatchLate {
+  const span = env.matchLateHours * HOUR;
+  if (env.matchAlwaysOpen || span === 0) return { open: false, closesAt: now };
+  const offset = env.matchUtcOffset * HOUR;
+  const midnight = Math.floor((now + offset) / DAY) * DAY;
+  /* Today's window, and yesterday's in case it runs past midnight. */
+  for (const day of [midnight, midnight - DAY]) {
+    const starts = day + env.matchHours.close * HOUR - offset;
+    if (now >= starts && now < starts + span) return { open: true, closesAt: starts + span };
+  }
+  const ends = midnight + env.matchHours.close * HOUR - offset + span;
+  return { open: false, closesAt: ends > now ? ends : ends + DAY };
+}
+
 /** The Lagos calendar date, `YYYY-MM-DD`, for the daily numbers. */
 export function matchDay(now = Date.now()): string {
   return new Date(now + env.matchUtcOffset * HOUR).toISOString().slice(0, 10);

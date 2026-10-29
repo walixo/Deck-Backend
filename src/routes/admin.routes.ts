@@ -22,14 +22,26 @@ import { listAllGames, reviewGame } from '../controllers/game.controller';
 import {
   declineMatchSection,
   dismissMatchReports,
+  approveMatchVerification,
+  declineMatchVerification,
+  deleteMatchNight,
+  listMatchNights,
+  listMatchVerifications,
   matchReports,
+  matchRevenue,
   matchSectionRequests,
   matchStats,
+  saveMatchNight,
   pauseMatchUser,
   setMatchSection,
   unpauseMatchUser,
 } from '../controllers/matchAdmin.controller';
-import { matchPauseSchema, matchSectionSchema } from '../validators/match.validators';
+import {
+  matchNightSchema,
+  matchPauseSchema,
+  matchSectionSchema,
+  matchVerificationDecisionSchema,
+} from '../validators/match.validators';
 import { requireAuth } from '../middleware/auth';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { listAgentGamesForReview, reviewAgentGame } from '../controllers/agentGame.controller';
@@ -135,6 +147,17 @@ router.patch(
   asyncHandler(setMatchSection),
 );
 router.delete('/match/people/:userId/section-request', asyncHandler(declineMatchSection));
+router.get('/match/revenue', asyncHandler(matchRevenue));
+router.get('/match/nights', asyncHandler(listMatchNights));
+router.put('/match/nights', validate(matchNightSchema), asyncHandler(saveMatchNight));
+router.delete('/match/nights/:day', asyncHandler(deleteMatchNight));
+router.get('/match/verifications', asyncHandler(listMatchVerifications));
+router.post('/match/verifications/:id/approve', asyncHandler(approveMatchVerification));
+router.post(
+  '/match/verifications/:id/decline',
+  validate(matchVerificationDecisionSchema),
+  asyncHandler(declineMatchVerification),
+);
 
 router.get('/posts', asyncHandler(listAllPosts));
 router.post('/posts', validate(createPostSchema), asyncHandler(createPost));

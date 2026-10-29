@@ -3,6 +3,7 @@ import { AdCampaign, type IAdCampaign } from '../models/AdCampaign';
 import { Contribution, type IContribution } from '../models/Contribution';
 import { Game } from '../models/Game';
 import { GamePurchase, type IGamePurchase } from '../models/GamePurchase';
+import { MatchTopup } from '../models/MatchMoney';
 import { Item } from '../models/Item';
 import { MerchProduct } from '../models/MerchProduct';
 import { Order, type IOrder } from '../models/Order';
@@ -15,6 +16,7 @@ import {
   type VerifiedPayment,
 } from '../services/bachs';
 import { handleConnectEvent } from '../services/payouts';
+import { applyVerifiedTopup } from '../services/matchWallet';
 import { nextOpening } from '../services/adInventory';
 import { evaluateBadges } from '../services/badges';
 import { formatMinor, notify } from '../services/notify';
@@ -480,6 +482,13 @@ async function settle(
   const purchase = await GamePurchase.findOne(ref ? { reference: ref } : { checkoutId });
   if (purchase) {
     await applyVerifiedGamePurchase(purchase, verified);
+    return;
+  }
+
+  /* Match credit, topped up from match.onedeck.africa. */
+  const topup = await MatchTopup.findOne(ref ? { reference: ref } : { checkoutId });
+  if (topup) {
+    await applyVerifiedTopup(topup, verified);
     return;
   }
 

@@ -29,6 +29,12 @@ export interface RateLimitOptions {
   max: number;
   /** What the 429 says. Deliberately vague about why. */
   message?: string;
+  /**
+   * Who counts as one caller. By default the IP address — right for sign-in.
+   * Routes behind `requireAuth` may count per account instead, where many
+   * people share one address (mobile carriers put whole cities behind one).
+   */
+  key?: (req: Request) => string | undefined;
 }
 
 /**
@@ -45,7 +51,7 @@ const SWEEP_INTERVAL_MS = 60_000;
 const SWEEP_AT_ENTRIES = 10_000;
 
 export function rateLimit(options: RateLimitOptions) {
-  const { windowMs, max, message = 'Too many attempts. Try again shortly.' } = options;
+  const { windowMs, max, message = 'Too many attempts. Try again shortly.', key: keyOf } = options;
 
   const windows = new Map<string, Window>();
   let lastSweep = Date.now();
@@ -72,7 +78,7 @@ export function rateLimit(options: RateLimitOptions) {
      * only when `trust proxy` is set, which is exactly the condition under
      * which `X-Forwarded-For` can be believed.
      */
-    const key = req.ip ?? 'unknown';
+    const key = keyOf?.(req) ?? req.ip ?? 'unknown';
     const window = windows.get(key);
 
     if (!window || window.resets <= now) {

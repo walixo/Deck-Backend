@@ -1,13 +1,27 @@
 import type { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { MatchCall, MatchReport } from '../models/MatchCall';
+import {
+  MatchEntry,
+  MatchLedger,
+  MatchNight,
+  MatchTopup,
+  MatchVerification,
+} from '../models/MatchMoney';
 import { MatchDay, MatchProfile } from '../models/MatchProfile';
 import { User } from '../models/User';
 import { audit } from '../services/audit';
 import * as hub from '../services/matchHub';
 import { hoursAt, matchDay } from '../services/matchHours';
+import { refreshNights } from '../services/matchNights';
+import { addCredit, isPlus } from '../services/matchWallet';
 import { ApiError } from '../utils/ApiError';
-import type { MatchPauseInput, MatchSectionInput } from '../validators/match.validators';
+import type {
+  MatchNightInput,
+  MatchPauseInput,
+  MatchSectionInput,
+  MatchVerificationDecisionInput,
+} from '../validators/match.validators';
 
 /**
  * Match, for staff: whether it is working, who has been reported, and the
@@ -312,4 +326,227 @@ export async function declineMatchSection(req: Request, res: Response): Promise<
     summary: `Declined ${label}'s request to change Match section`,
   });
   res.json({ success: true, data: { declined: true } });
+}
+
+/* ---------------------------------------------------------------- money --- */
+
+/**
+ * What Match earned: credit spent, by kind, and top-ups paid, over the last
+ * `days`. Spending is the revenue; top-ups are cash in, some not yet spent.
+ */
+export async function matchRevenue(req: Request, res: Response): Promise<void> {
+  const days = Math.min(90, Math.max(1, Number(req.query.days ?? 14) || 14));
+  const since = new Date(Date.now() - days * DAY);
+  const [spent, topups, credit, members, verified] = await Promise.all([
+    MatchLedger.aggregate<{ _id: string; minor: number; count: number }>([
+      { $match: { createdAt: { $gte: since }, amountMinor: { $lt: 0 } } },
+      {
+        $group: {
+          _id: '$kind',
+          minor: { $sum: { $multiply: ['$amountMinor', -1] } },
+          count: { $sum: 1 },
+        },
+      },
+    ]),
+    MatchTopup.aggregate<{ _id: null; minor: number; count: number }>([
+      { $match: { status: 'paid', mode: 'live', paidAt: { $gte: since } } },
+      { $group: { _id: null, minor: { $sum: '$amountMinor' }, count: { $sum: 1 } } },
+    ]),
+    MatchProfile.aggregate<{ _id: null; minor: number }>([
+      { $group: { _id: null, minor: { $sum: '$creditMinor' } } },
+    ]),
+    MatchProfile.countDocuments({ plusUntil: { $gt: new Date() } }),
+    MatchProfile.countDocuments({ verifiedAt: { $ne: null } }),
+  ]);
+  /* Refunds hand credit back, so they come off what was spent. */
+  const refunds = await MatchLedger.aggregate<{ _id: null; minor: number }>([
+    { $match: { createdAt: { $gte: since }, kind: 'refund' } },
+    { $group: { _id: null, minor: { $sum: '$amountMinor' } } },
+  ]);
+  const byKind = Object.fromEntries(
+    spent.map((row) => [row._id, { minor: row.minor, count: row.count }]),
+  );
+  const gross = spent.reduce((sum, row) => sum + row.minor, 0);
+  res.json({
+    success: true,
+    data: {
+      days,
+      spentMinor: gross - (refunds[0]?.minor ?? 0),
+      byKind,
+      topupsMinor: topups[0]?.minor ?? 0,
+      topups: topups[0]?.count ?? 0,
+      /* Credit people hold and have not spent yet. */
+      outstandingMinor: credit[0]?.minor ?? 0,
+      plusMembers: members,
+      verifiedPeople: verified,
+    },
+  });
+}
+
+/* --------------------------------------------------------------- nights --- */
+
+export async function listMatchNights(_req: Request, res: Response): Promise<void> {
+  const nights = await MatchNight.find({ day: { $gte: matchDay(Date.now() - 7 * DAY) } })
+    .sort({ day: 1 })
+    .limit(60)
+    .lean();
+  const entries = await MatchEntry.aggregate<{ _id: string; count: number; minor: number }>([
+    { $match: { day: { $in: nights.map((night) => night.day) } } },
+    { $group: { _id: '$day', count: { $sum: 1 }, minor: { $sum: '$priceMinor' } } },
+  ]);
+  const entriesOf = new Map(entries.map((row) => [row._id, row]));
+  res.json({
+    success: true,
+    data: nights.map((night) => ({
+      day: night.day,
+      sponsor: night.sponsor,
+      theme: night.theme,
+      entries: entriesOf.get(night.day)?.count ?? 0,
+      entriesMinor: entriesOf.get(night.day)?.minor ?? 0,
+    })),
+  });
+}
+
+/** Creates or replaces one evening's sponsor and theme. */
+export async function saveMatchNight(req: Request, res: Response): Promise<void> {
+  const input = req.body as MatchNightInput;
+  const night = await MatchNight.findOneAndUpdate(
+    { day: input.day },
+    { day: input.day, sponsor: input.sponsor, theme: input.theme },
+    { upsert: true, new: true },
+  );
+  await refreshNights();
+  await audit(req, {
+    action: 'match.night.saved',
+    targetType: 'match_night',
+    targetId: night._id,
+    targetLabel: input.day,
+    summary: `Set Match night ${input.day}${input.sponsor ? ` · presented by ${input.sponsor.name}` : ''}${input.theme ? ` · ${input.theme.title}` : ''}`,
+    after: { sponsor: input.sponsor, theme: input.theme },
+  });
+  res.json({ success: true, data: { day: night.day, sponsor: night.sponsor, theme: night.theme } });
+}
+
+export async function deleteMatchNight(req: Request, res: Response): Promise<void> {
+  const day = String(req.params.day);
+  const night = await MatchNight.findOneAndDelete({ day });
+  if (!night) throw ApiError.notFound('No such night');
+  await refreshNights();
+  await audit(req, {
+    action: 'match.night.removed',
+    targetType: 'match_night',
+    targetId: night._id,
+    targetLabel: day,
+    summary: `Removed Match night ${day}`,
+  });
+  res.json({ success: true, data: { removed: true } });
+}
+
+/* --------------------------------------------------------- verification --- */
+
+/** Selfies waiting for a decision, oldest first, with the photo itself. */
+export async function listMatchVerifications(_req: Request, res: Response): Promise<void> {
+  const pending = await MatchVerification.find({ status: 'pending' })
+    .select('+photo')
+    .sort({ submittedAt: 1 })
+    .limit(30);
+  const users = await User.find({ _id: { $in: pending.map((v) => v.user) } })
+    .select(PEOPLE_FIELDS)
+    .lean();
+  const userOf = new Map(users.map((u) => [String(u._id), u]));
+  res.json({
+    success: true,
+    data: pending.map((v) => ({
+      id: String(v._id),
+      userId: String(v.user),
+      name: userOf.get(String(v.user))?.name ?? 'Unknown',
+      email: userOf.get(String(v.user))?.email ?? '',
+      prompt: v.prompt,
+      photo: v.photo ? `data:${v.photoType};base64,${v.photo.toString('base64')}` : null,
+      submittedAt: v.submittedAt,
+    })),
+  });
+}
+
+async function pendingVerification(id: string) {
+  if (!mongoose.isValidObjectId(id)) throw ApiError.notFound('No such check');
+  const verification = await MatchVerification.findOne({ _id: id, status: 'pending' });
+  if (!verification) throw ApiError.notFound('That check was already decided');
+  const user = await User.findById(verification.user).select(PEOPLE_FIELDS);
+  return { verification, label: user?.name ?? String(verification.user) };
+}
+
+/** Approves a selfie: the badge appears, and the photo is deleted. */
+export async function approveMatchVerification(req: Request, res: Response): Promise<void> {
+  const { verification, label } = await pendingVerification(String(req.params.id));
+  verification.status = 'approved';
+  verification.photo = null;
+  verification.reviewedAt = new Date();
+  verification.reviewedBy = req.user!._id;
+  await verification.save();
+  const profile = await MatchProfile.findOneAndUpdate(
+    { user: verification.user },
+    { verifiedAt: new Date() },
+    { new: true },
+  );
+  if (profile) {
+    hub.update({
+      userId: String(profile.user),
+      gender: profile.gender,
+      plus: isPlus(profile),
+      verified: true,
+      blocked: profile.blocked.map(String),
+    });
+  }
+  await audit(req, {
+    action: 'match.verification.approved',
+    targetType: 'user',
+    targetId: verification.user,
+    targetLabel: label,
+    summary: `Verified ${label} on Match`,
+  });
+  res.json({ success: true, data: { status: 'approved' } });
+}
+
+/**
+ * Declines a selfie, refunds the check to their credit and deletes the photo.
+ * Someone who looks under 18 is also kept off Match.
+ */
+export async function declineMatchVerification(req: Request, res: Response): Promise<void> {
+  const input = req.body as MatchVerificationDecisionInput;
+  const { verification, label } = await pendingVerification(String(req.params.id));
+  verification.status = 'declined';
+  verification.photo = null;
+  verification.note =
+    input.note ||
+    (input.underage
+      ? 'Match is for people 18 and over.'
+      : 'The photo did not show the pose clearly. Try again.');
+  verification.reviewedAt = new Date();
+  verification.reviewedBy = req.user!._id;
+  await verification.save();
+  if (verification.priceMinor > 0) {
+    await addCredit(
+      verification.user,
+      verification.priceMinor,
+      'refund',
+      String(verification._id),
+      'Verified badge check declined',
+    );
+  }
+  if (input.underage) {
+    await MatchProfile.updateOne(
+      { user: verification.user },
+      { bannedUntil: new Date(Date.now() + 365 * 10 * DAY) },
+    );
+    hub.kick(String(verification.user));
+  }
+  await audit(req, {
+    action: 'match.verification.declined',
+    targetType: 'user',
+    targetId: verification.user,
+    targetLabel: label,
+    summary: `Declined ${label}'s Match verification${input.underage ? ' (looks under 18 — removed)' : ''}`,
+  });
+  res.json({ success: true, data: { status: 'declined' } });
 }

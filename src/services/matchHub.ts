@@ -4,7 +4,8 @@ import { env } from '../config/env';
 import { MatchCall, type MatchEndReason } from '../models/MatchCall';
 import { MatchDay, type MatchGender, type MatchHandles } from '../models/MatchProfile';
 import { ApiError } from '../utils/ApiError';
-import { hoursAt, matchDay } from './matchHours';
+import { hoursAt, lateAt, matchDay } from './matchHours';
+import { tonight } from './matchNights';
 
 /**
  * Match, live: who is online, who is waiting, who is talking to whom.
@@ -36,6 +37,10 @@ export type MatchState = 'idle' | 'waiting' | 'calling';
 interface Person {
   userId: string;
   gender: MatchGender;
+  /** A Match+ member: may join the line in the late window. */
+  plus: boolean;
+  /** Has the Verified badge, which the person they talk to sees. */
+  verified: boolean;
   blocked: Set<string>;
   lines: Set<Response>;
   state: MatchState;
@@ -59,9 +64,12 @@ interface Call {
   shareUntil: number;
   shares: Map<string, MatchHandles>;
   revealed: boolean;
-  /** Who pressed +1 minute. Both, once per call, adds a minute. */
+  /** Who pressed +1 minute this round. Both pressing adds a minute. */
   extendVotes: Set<string>;
-  extended: boolean;
+  /** Minutes added so far. The first is free; later ones are paid for. */
+  extensions: number;
+  /** Both pressed and the server is charging for it; no new votes meanwhile. */
+  settling: boolean;
   timer: NodeJS.Timeout | null;
 }
 
@@ -87,6 +95,11 @@ const pairKey = (a: string, b: string) => [a, b].sort().join(':');
 
 function write(res: Response, event: string, data: unknown): void {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/** Tells someone something outside a call — a gift arriving, a new balance. */
+export function notify(userId: string, event: string, data: unknown): void {
+  tell(userId, event, data);
 }
 
 function tell(userId: string, event: string, data: unknown): void {
@@ -115,6 +128,8 @@ export function publicView() {
   const now = counts();
   return {
     hours: hoursAt(),
+    late: lateAt(),
+    tonight: tonight(),
     live: now.total >= env.matchCountsFrom ? now : null,
     available: { male: now.male > 0, female: now.female > 0 },
     pushKey,
@@ -184,7 +199,8 @@ function snapshot(person: Person) {
             caller: call.caller === person.userId,
             startedAt: call.startedAt,
             endsAt: call.endsAt,
-            extended: call.extended,
+            extensions: call.extensions,
+            them: { verified: Boolean(people.get(partnerOf(call, person.userId))?.verified) },
           }
         : null,
     serverNow: Date.now(),
@@ -196,6 +212,8 @@ function snapshot(person: Person) {
 export interface Presence {
   userId: string;
   gender: MatchGender;
+  plus: boolean;
+  verified: boolean;
   blocked: string[];
 }
 
@@ -216,6 +234,8 @@ export function attach(presence: Presence, res: Response): void {
     person = {
       userId: presence.userId,
       gender: presence.gender,
+      plus: presence.plus,
+      verified: presence.verified,
       blocked: new Set(presence.blocked),
       lines: new Set(),
       state: 'idle',
@@ -245,10 +265,12 @@ export function attach(presence: Presence, res: Response): void {
   });
 }
 
-/** A profile changed — a new block — and the hub should know. */
+/** A profile changed — a new block, Match+, a badge — and the hub should know. */
 export function update(presence: Presence): void {
   const person = people.get(presence.userId);
   if (!person) return;
+  person.plus = presence.plus;
+  person.verified = presence.verified;
   person.blocked = new Set(presence.blocked);
 }
 
@@ -306,10 +328,13 @@ function unqueue(person: Person): void {
 export function enqueue(userId: string): { position: number } {
   const person = present(userId);
   if (person.state === 'calling') throw ApiError.conflict('You are in a call');
-  if (!hoursAt().open) {
+  if (!hoursAt().open && !(person.plus && lateAt().open)) {
     const hour = env.matchHours.open % 12 || 12;
+    const opens = `${hour}${env.matchHours.open < 12 ? 'am' : 'pm'}`;
     throw ApiError.conflict(
-      `Match is closed — it opens at ${hour}${env.matchHours.open < 12 ? 'am' : 'pm'}`,
+      lateAt().open
+        ? `Match is closed — it opens at ${opens}. Match+ members talk until midnight.`
+        : `Match is closed — it opens at ${opens}`,
     );
   }
   if (person.state !== 'waiting') {
@@ -368,7 +393,8 @@ function begin(man: Person, woman: Person): void {
     shares: new Map(),
     revealed: false,
     extendVotes: new Set(),
-    extended: false,
+    extensions: 0,
+    settling: false,
     timer: null,
   };
   calls.set(call.id, call);
@@ -380,7 +406,12 @@ function begin(man: Person, woman: Person): void {
     unqueue(person);
     person.state = 'calling';
     person.callId = call.id;
-    tell(person.userId, 'matched', { callId: call.id, caller: call.caller === person.userId });
+    const partner = person === man ? woman : man;
+    tell(person.userId, 'matched', {
+      callId: call.id,
+      caller: call.caller === person.userId,
+      them: { verified: partner.verified },
+    });
   }
   recent.set(pairKey(man.userId, woman.userId), call.matchedAt);
   call.timer = setTimeout(() => {
@@ -469,30 +500,77 @@ function end(call: Call, reason: MatchEndReason, by?: string): void {
 }
 
 /**
- * Presses +1 minute. When both have, the call gets one more minute — once.
- * Each side hears who has pressed, so the other can say yes too.
+ * Presses +1 minute. Each side hears who has pressed, so the other can say
+ * yes too. When both have, the round is `agreed`: the caller charges for it
+ * (the first minute is free) and then grants or refuses it. Nobody can vote
+ * again while that is being settled.
  */
-export function extend(userId: string, callId: string): void {
+export function voteMinute(
+  userId: string,
+  callId: string,
+): { agreed: false } | { agreed: true; round: number; male: string; female: string } {
   const call = inCall(userId, callId);
-  if (call.state !== 'live' || call.extended) throw ApiError.conflict('No more time to add');
+  if (call.state !== 'live') throw ApiError.conflict('No more time to add');
+  if (call.settling) throw ApiError.conflict('Adding a minute…');
   call.extendVotes.add(userId);
   for (const id of [call.male, call.female]) {
     tell(id, 'extend', {
       callId,
       mine: call.extendVotes.has(id),
       theirs: call.extendVotes.has(partnerOf(call, id)),
+      round: call.extensions,
     });
   }
-  if (call.extendVotes.size < 2) return;
+  if (call.extendVotes.size < 2) return { agreed: false };
+  call.settling = true;
+  return { agreed: true, round: call.extensions, male: call.male, female: call.female };
+}
 
-  call.extended = true;
+/** Minutes added to this call so far: the next one is free only if none were. */
+export function minutesAdded(userId: string, callId: string): number {
+  return inCall(userId, callId).extensions;
+}
+
+/** Adds the agreed minute. False if the call ended while it was paid for. */
+export function grantMinute(callId: string): boolean {
+  const call = calls.get(callId);
+  if (!call) return false;
+  call.settling = false;
+  call.extendVotes.clear();
+  if (call.state !== 'live') return false;
+  call.extensions += 1;
   call.endsAt = (call.endsAt ?? Date.now()) + EXTRA_MS;
   if (call.timer) clearTimeout(call.timer);
   call.timer = setTimeout(() => end(call, 'time'), call.endsAt - Date.now());
   for (const id of [call.male, call.female]) {
-    tell(id, 'extended', { callId, endsAt: call.endsAt, serverNow: Date.now() });
+    tell(id, 'extended', {
+      callId,
+      endsAt: call.endsAt,
+      serverNow: Date.now(),
+      extensions: call.extensions,
+    });
   }
-  void MatchCall.updateOne({ callId }, { extended: true }).catch(() => undefined);
+  void MatchCall.updateOne({ callId }, { extended: true, extensions: call.extensions }).catch(
+    () => undefined,
+  );
+  return true;
+}
+
+/** The agreed minute could not be paid for: the votes reset, with a reason. */
+export function refuseMinute(callId: string, short: string): void {
+  const call = calls.get(callId);
+  if (!call) return;
+  call.settling = false;
+  call.extendVotes.clear();
+  for (const id of [call.male, call.female]) {
+    tell(id, 'extend', {
+      callId,
+      mine: false,
+      theirs: false,
+      round: call.extensions,
+      refused: id === short ? 'you' : 'them',
+    });
+  }
 }
 
 export function leave(userId: string, callId: string, reason: MatchEndReason = 'left'): void {
@@ -535,18 +613,23 @@ export function share(
  * finishes their call — and everyone hears the new hours.
  */
 let wasOpen = hoursAt().open;
+let wasLate = lateAt().open;
 setInterval(() => {
   const open = hoursAt().open;
-  if (open === wasOpen) return;
+  const late = lateAt().open;
+  if (open === wasOpen && late === wasLate) return;
   wasOpen = open;
+  wasLate = late;
   if (!open) {
+    /* At closing, Match+ members may stay in line for the late window. */
     for (const gender of ['male', 'female'] as const) {
-      for (const userId of queues[gender]) {
+      queues[gender] = queues[gender].filter((userId) => {
         const person = people.get(userId);
+        if (late && person?.plus) return true;
         if (person) person.state = 'idle';
         tell(userId, 'closed', {});
-      }
-      queues[gender] = [];
+        return false;
+      });
     }
   }
   const view = publicView();

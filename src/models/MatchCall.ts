@@ -29,6 +29,8 @@ export interface IMatchCall extends Document {
   femaleWaitMs: number;
   /** Both pressed +1 minute. */
   extended: boolean;
+  /** How many minutes were added; the first is free, later ones paid. */
+  extensions: number;
   /** Who pressed share. Usernames are revealed only when both did. */
   sharedBy: mongoose.Types.ObjectId[];
   revealedAt: Date | null;
@@ -49,6 +51,7 @@ const callSchema = new Schema<IMatchCall>(
     maleWaitMs: { type: Number, default: 0 },
     femaleWaitMs: { type: Number, default: 0 },
     extended: { type: Boolean, default: false },
+    extensions: { type: Number, default: 0 },
     sharedBy: { type: [Schema.Types.ObjectId], default: [] },
     revealedAt: { type: Date, default: null },
   },

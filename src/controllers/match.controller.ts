@@ -1,8 +1,18 @@
 import type { Request, Response } from 'express';
 import { MatchCall, MatchReport } from '../models/MatchCall';
 import { MatchProfile, MatchPush, type IMatchProfile } from '../models/MatchProfile';
+import { MatchEntry, MatchGift } from '../models/MatchMoney';
 import * as hub from '../services/matchHub';
+import { hoursAt, matchDay } from '../services/matchHours';
+import { tonight } from '../services/matchNights';
 import { pushPublicKey } from '../services/matchPing';
+import {
+  addCredit,
+  isPlus,
+  MATCH_PRICES,
+  NotEnoughCredit,
+  spendBoth,
+} from '../services/matchWallet';
 import { ApiError } from '../utils/ApiError';
 import type {
   CreateMatchProfileInput,
@@ -39,12 +49,17 @@ function toProfileResponse(profile: IMatchProfile, pings = false) {
     bannedUntil: banned(profile) ? profile.bannedUntil : null,
     sectionRequested: Boolean(profile.sectionRequest),
     pings,
+    creditMinor: profile.creditMinor,
+    plusUntil: isPlus(profile) ? profile.plusUntil : null,
+    verified: Boolean(profile.verifiedAt),
   };
 }
 
 const presence = (profile: IMatchProfile): hub.Presence => ({
   userId: String(profile.user),
   gender: profile.gender,
+  plus: isPlus(profile),
+  verified: Boolean(profile.verifiedAt),
   blocked: profile.blocked.map(String),
 });
 
@@ -150,7 +165,20 @@ export async function stream(req: Request, res: Response): Promise<void> {
 }
 
 export async function joinQueue(req: Request, res: Response): Promise<void> {
-  await ready(req);
+  const profile = await ready(req);
+  /* A themed night with an entry fee: only people who paid in may join. */
+  const hours = hoursAt();
+  const night = tonight();
+  if (hours.open && night?.theme && night.theme.entryMinor > 0) {
+    const paid = await MatchEntry.exists({ user: profile.user, day: matchDay(hours.opensAt) });
+    if (!paid) {
+      throw new ApiError(402, `Tonight is ${night.theme.title} — join tonight to find someone.`, {
+        code: 'MATCH_ENTRY',
+      });
+    }
+  }
+  /* Fresh flags: Match+ or a badge may have arrived since the line opened. */
+  hub.update(presence(profile));
   res.json({ success: true, data: hub.enqueue(String(req.user!._id)) });
 }
 
@@ -173,9 +201,49 @@ export function connected(req: Request, res: Response): void {
   res.json({ success: true, data: { ok: true } });
 }
 
-export function extend(req: Request, res: Response): void {
-  hub.extend(String(req.user!._id), String(req.params.callId));
-  res.json({ success: true, data: { ok: true } });
+/* The first added minute is free for everyone; after that, free with Match+. */
+const minutePrice = (round: number, profile: IMatchProfile | undefined) =>
+  round === 0 || (profile && isPlus(profile)) ? 0 : MATCH_PRICES.minute;
+
+/**
+ * +1 minute. Charged only when both have pressed, and to both or neither: a
+ * vote from someone who could not pay is refused before it counts.
+ */
+export async function extend(req: Request, res: Response): Promise<void> {
+  const profile = await ready(req);
+  const userId = String(req.user!._id);
+  const callId = String(req.params.callId);
+  const price = minutePrice(hub.minutesAdded(userId, callId), profile);
+  if (price > profile.creditMinor) throw new NotEnoughCredit(price, profile.creditMinor, userId);
+
+  const vote = hub.voteMinute(userId, callId);
+  if (!vote.agreed) {
+    res.json({ success: true, data: { agreed: false } });
+    return;
+  }
+  const both = await MatchProfile.find({ user: { $in: [vote.male, vote.female] } });
+  const charges = [vote.male, vote.female].map((id) => ({
+    userId: id,
+    amountMinor: minutePrice(
+      vote.round,
+      both.find((p) => String(p.user) === id),
+    ),
+  }));
+  try {
+    await spendBoth(charges, 'minute', callId, 'An extra minute');
+  } catch (error) {
+    hub.refuseMinute(callId, error instanceof NotEnoughCredit ? error.userId : '');
+    throw error;
+  }
+  if (!hub.grantMinute(callId)) {
+    /* The call ended while it was being paid for: hand the money back. */
+    for (const charge of charges) {
+      if (charge.amountMinor > 0) {
+        await addCredit(charge.userId, charge.amountMinor, 'refund', callId, 'Call ended first');
+      }
+    }
+  }
+  res.json({ success: true, data: { agreed: true } });
 }
 
 export function leaveCall(req: Request, res: Response): void {
@@ -256,15 +324,26 @@ export async function matches(req: Request, res: Response): Promise<void> {
     .sort({ revealedAt: -1 })
     .limit(30);
   const others = calls.map((call) => (String(call.male) === String(me) ? call.female : call.male));
-  const profiles = await MatchProfile.find({ user: { $in: others } }).select('user x instagram');
+  const [profiles, gifts] = await Promise.all([
+    MatchProfile.find({ user: { $in: others } }).select('user x instagram verifiedAt'),
+    MatchGift.find({ callId: { $in: calls.map((call) => call.callId) } }).sort({ createdAt: 1 }),
+  ]);
   const handles = new Map(
     profiles.map((p) => [String(p.user), { x: p.x, instagram: p.instagram }]),
   );
+  const verified = new Set(profiles.filter((p) => p.verifiedAt).map((p) => String(p.user)));
+  const giftsFor = (callId: string) =>
+    gifts
+      .filter((gift) => gift.callId === callId)
+      .map((gift) => ({ gift: gift.gift, mine: gift.from.equals(me) }));
   res.json({
     success: true,
     data: calls
       .map((call, index) => ({
+        callId: call.callId,
         handles: handles.get(String(others[index])) ?? { x: '', instagram: '' },
+        verified: verified.has(String(others[index])),
+        gifts: giftsFor(call.callId),
         at: call.revealedAt,
       }))
       .filter((match) => match.handles.x || match.handles.instagram),

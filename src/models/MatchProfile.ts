@@ -36,6 +36,12 @@ export interface IMatchProfile extends Document {
   sectionRequest: { note: string; at: Date } | null;
   /** When this person was last pinged that someone is free — once an evening. */
   pingedAt: Date | null;
+  /** Prepaid Match credit, kobo. Spent on extra minutes, gifts, entry, badges and Match+. */
+  creditMinor: number;
+  /** Match+ runs until this moment; null or past means not a member. */
+  plusUntil: Date | null;
+  /** When staff approved their selfie check; shown as a Verified badge. */
+  verifiedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -57,6 +63,9 @@ const profileSchema = new Schema<IMatchProfile>(
       default: null,
     },
     pingedAt: { type: Date, default: null },
+    creditMinor: { type: Number, default: 0, min: 0 },
+    plusUntil: { type: Date, default: null },
+    verifiedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

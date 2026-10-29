@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MATCH_REPORT_REASONS } from '../models/MatchCall';
+import { MATCH_GIFTS } from '../models/MatchMoney';
 import { MATCH_GENDERS } from '../models/MatchProfile';
 
 /**
@@ -78,6 +79,54 @@ export const matchSectionSchema = z.object({ gender: z.enum(MATCH_GENDERS) }).st
 
 export const matchPauseSchema = z.object({ days: z.number().int().min(1).max(365) }).strict();
 
+export const matchTopupSchema = z.object({ amountMinor: z.number().int().positive() }).strict();
+
+export const matchGiftSchema = z.object({ gift: z.enum(MATCH_GIFTS) }).strict();
+
+/** A selfie as a data URL; the screen shrinks it to a few hundred kilobytes. */
+export const matchVerificationSchema = z
+  .object({ photo: z.string().max(900_000, 'That photo is too large') })
+  .strict();
+
+const lagosDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'A date like 2026-11-06');
+
+/** Staff: one evening's sponsor and/or theme. Either may be null to clear it. */
+export const matchNightSchema = z
+  .object({
+    day: lagosDay,
+    sponsor: z
+      .object({
+        name: z.string().trim().min(1).max(60),
+        line: z.string().trim().max(140).default(''),
+        url: z
+          .string()
+          .trim()
+          .max(300)
+          .refine((value) => value === '' || /^https:\/\//.test(value), 'Links start with https://')
+          .default(''),
+      })
+      .strict()
+      .nullable(),
+    theme: z
+      .object({
+        title: z.string().trim().min(1).max(60),
+        blurb: z.string().trim().max(200).default(''),
+        entryMinor: z.number().int().min(0).max(10_000_00),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict()
+  .refine((night) => night.sponsor || night.theme, 'Add a sponsor, a theme, or both');
+
+export const matchVerificationDecisionSchema = z
+  .object({
+    note: z.string().trim().max(300).optional(),
+    /* Looks under 18: declined, refunded, and kept off Match. */
+    underage: z.boolean().optional(),
+  })
+  .strict();
+
 export type CreateMatchProfileInput = z.infer<typeof createMatchProfileSchema>;
 export type UpdateMatchProfileInput = z.infer<typeof updateMatchProfileSchema>;
 export type MatchSignalInput = z.infer<typeof matchSignalSchema>;
@@ -86,3 +135,8 @@ export type MatchPushInput = z.infer<typeof matchPushSchema>;
 export type MatchSectionRequestInput = z.infer<typeof matchSectionRequestSchema>;
 export type MatchSectionInput = z.infer<typeof matchSectionSchema>;
 export type MatchPauseInput = z.infer<typeof matchPauseSchema>;
+export type MatchTopupInput = z.infer<typeof matchTopupSchema>;
+export type MatchGiftInput = z.infer<typeof matchGiftSchema>;
+export type MatchVerificationInput = z.infer<typeof matchVerificationSchema>;
+export type MatchNightInput = z.infer<typeof matchNightSchema>;
+export type MatchVerificationDecisionInput = z.infer<typeof matchVerificationDecisionSchema>;
