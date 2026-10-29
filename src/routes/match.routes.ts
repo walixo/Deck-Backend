@@ -7,6 +7,7 @@ import {
 import { Router } from 'express';
 import {
   connected,
+  iceServers,
   createMe,
   extend,
   getMe,
@@ -90,6 +91,13 @@ router.get('/stream', auth, asyncHandler(stream));
 router.post('/queue', queueLimiter, auth, asyncHandler(joinQueue));
 router.delete('/queue', auth, leaveQueue);
 router.post('/calls/:callId/signal', signalLimiter, auth, validate(matchSignalSchema), signal);
+/* Asked for before joining the line; the relay's credentials are short-lived. */
+const iceLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  key: (req) => (req.user ? `user:${String(req.user._id)}` : undefined),
+});
+router.get('/ice', auth, iceLimiter, asyncHandler(iceServers));
 router.post('/calls/:callId/connected', auth, connected);
 router.post('/calls/:callId/extend', auth, moneyLimiter, asyncHandler(extend));
 router.post(

@@ -31,6 +31,8 @@ export interface IMatchCall extends Document {
   extended: boolean;
   /** How many minutes were added; the first is free, later ones paid. */
   extensions: number;
+  /** The audio went through the TURN relay because a direct route failed. */
+  relayed: boolean;
   /** Who pressed share. Usernames are revealed only when both did. */
   sharedBy: mongoose.Types.ObjectId[];
   revealedAt: Date | null;
@@ -52,6 +54,7 @@ const callSchema = new Schema<IMatchCall>(
     femaleWaitMs: { type: Number, default: 0 },
     extended: { type: Boolean, default: false },
     extensions: { type: Number, default: 0 },
+    relayed: { type: Boolean, default: false },
     sharedBy: { type: [Schema.Types.ObjectId], default: [] },
     revealedAt: { type: Date, default: null },
   },

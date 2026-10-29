@@ -47,7 +47,7 @@ export async function matchStats(req: Request, res: Response): Promise<void> {
   const since = new Date(Date.now() - days * DAY);
   const [calls, reports, peaks] = await Promise.all([
     MatchCall.find({ matchedAt: { $gte: since } })
-      .select('matchedAt startedAt endReason revealedAt maleWaitMs femaleWaitMs extended')
+      .select('matchedAt startedAt endReason revealedAt maleWaitMs femaleWaitMs extended relayed')
       .lean(),
     MatchReport.find({ createdAt: { $gte: since } })
       .select('createdAt')
@@ -58,6 +58,7 @@ export async function matchStats(req: Request, res: Response): Promise<void> {
   const blank = () => ({
     calls: 0,
     connected: 0,
+    relayed: 0,
     timeUp: 0,
     revealed: 0,
     leftEarly: 0,
@@ -82,6 +83,7 @@ export async function matchStats(req: Request, res: Response): Promise<void> {
     bump(day, 'waitMale', call.maleWaitMs ?? 0);
     bump(day, 'waitFemale', call.femaleWaitMs ?? 0);
     if (call.startedAt) bump(day, 'connected');
+    if (call.startedAt && call.relayed) bump(day, 'relayed');
     if (call.endReason === 'time') bump(day, 'timeUp');
     if (call.endReason === 'left' && call.startedAt) bump(day, 'leftEarly');
     if (call.revealedAt) bump(day, 'revealed');
@@ -94,6 +96,8 @@ export async function matchStats(req: Request, res: Response): Promise<void> {
     calls: row.calls,
     connected: row.connected,
     connectRate: ratio(row.connected, row.calls),
+    /* Of the calls that connected, how many needed the relay. */
+    relayRate: ratio(row.relayed, row.connected),
     /* Of the calls that ran their full time, how many swapped usernames. */
     shareRate: ratio(row.revealed, row.timeUp),
     /* Reports per connected call. */

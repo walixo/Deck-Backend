@@ -243,6 +243,17 @@ export const env = {
     subject: process.env.VAPID_SUBJECT ?? 'mailto:hello@onedeck.africa',
   },
 
+  /**
+   * Cloudflare's TURN relay for Match calls, from Cloudflare → Realtime →
+   * TURN Server. Calls connect directly when they can and pass through the
+   * relay only when the two networks can't reach each other. The API token is
+   * a secret. Without both, calls are direct-only, as before.
+   */
+  cloudflareTurn: {
+    keyId: process.env.CLOUDFLARE_TURN_KEY_ID ?? '',
+    apiToken: process.env.CLOUDFLARE_TURN_API_TOKEN ?? '',
+  },
+
   /*
    * How long a launch must wait before it can ship a new version.
    *

@@ -6,6 +6,7 @@ import * as hub from '../services/matchHub';
 import { hoursAt, matchDay } from '../services/matchHours';
 import { tonight } from '../services/matchNights';
 import { pushPublicKey } from '../services/matchPing';
+import { iceServersFor } from '../services/matchRelay';
 import {
   addCredit,
   isPlus,
@@ -196,8 +197,22 @@ export function signal(req: Request, res: Response): void {
   res.json({ success: true, data: { sent: true } });
 }
 
+/** The STUN and TURN servers this person's browser should call with. */
+export async function iceServers(req: Request, res: Response): Promise<void> {
+  res.json({ success: true, data: await iceServersFor(String(req.user!._id)) });
+}
+
+/**
+ * One side can hear the other. It also says which way the audio went —
+ * straight across, or through the relay — so staff can see how many calls the
+ * relay rescues.
+ */
 export function connected(req: Request, res: Response): void {
-  hub.connected(String(req.user!._id), String(req.params.callId));
+  const callId = String(req.params.callId);
+  hub.connected(String(req.user!._id), callId);
+  if ((req.body as { route?: unknown } | undefined)?.route === 'relay') {
+    void MatchCall.updateOne({ callId }, { relayed: true }).catch(() => undefined);
+  }
   res.json({ success: true, data: { ok: true } });
 }
 
