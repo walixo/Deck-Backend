@@ -3,6 +3,7 @@ import { connectDatabase, disconnectDatabase } from './config/db';
 import { env } from './config/env';
 import { checkBachsKey } from './services/bachs';
 import { assertSigningKey } from './services/gameIdKeys';
+import { loadTalkedCounts } from './services/matchHub';
 import { startNights } from './services/matchNights';
 import { startMatchPings } from './services/matchPing';
 import { startScheduler, stopScheduler } from './services/scheduler';
@@ -34,6 +35,10 @@ async function bootstrap(): Promise<void> {
   startScheduler();
   startMatchPings();
   startNights();
+  loadTalkedCounts().catch((error: Error) => {
+    // eslint-disable-next-line no-console
+    console.error(`[match] could not load who has talked to whom: ${error.message}`);
+  });
 
   /* In the background: a slow provider must not hold up the server starting. */
   void checkBachsKey();

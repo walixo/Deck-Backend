@@ -1,4 +1,3 @@
-import { pushPublicKey } from './vapid';
 import { randomBytes } from 'node:crypto';
 import type { Response } from 'express';
 import { env } from '../config/env';
@@ -7,6 +6,7 @@ import { MatchDay, type MatchGender, type MatchHandles } from '../models/MatchPr
 import { ApiError } from '../utils/ApiError';
 import { hoursAt, lateAt, matchDay } from './matchHours';
 import { tonight } from './matchNights';
+import { pushPublicKey } from './vapid';
 
 /**
  * Match, live: who is online, who is waiting, who is talking to whom.
@@ -82,6 +82,8 @@ const CONNECT_MS = 25_000;
 const GRACE_MS = 10_000;
 /** The same two people are not matched again within this long. */
 const REMATCH_MS = 10 * 60 * 1000;
+/** Two people can talk this many times in all; after that they are not matched again. */
+export const MAX_CALLS_TOGETHER = 5;
 const HEARTBEAT_MS = 15_000;
 const EXTRA_MS = 60_000;
 
@@ -89,6 +91,9 @@ const people = new Map<string, Person>();
 const queues: Record<MatchGender, string[]> = { male: [], female: [] };
 const calls = new Map<string, Call>();
 const recent = new Map<string, number>();
+/* How many times each pair has actually talked — calls that connected, not
+   ones that failed to. Loaded from the call history at start-up. */
+const talked = new Map<string, number>();
 
 const pairKey = (a: string, b: string) => [a, b].sort().join(':');
 
@@ -359,7 +364,9 @@ export function dequeue(userId: string): void {
 function canMeet(man: Person, woman: Person): boolean {
   if (man.lines.size === 0 || woman.lines.size === 0) return false;
   if (man.blocked.has(woman.userId) || woman.blocked.has(man.userId)) return false;
-  const last = recent.get(pairKey(man.userId, woman.userId));
+  const pair = pairKey(man.userId, woman.userId);
+  if ((talked.get(pair) ?? 0) >= MAX_CALLS_TOGETHER) return false;
+  const last = recent.get(pair);
   return !last || Date.now() - last > REMATCH_MS;
 }
 
@@ -455,6 +462,8 @@ export function connected(userId: string, callId: string): void {
   if (call.timer) clearTimeout(call.timer);
   call.state = 'live';
   call.startedAt = Date.now();
+  const pair = pairKey(call.male, call.female);
+  talked.set(pair, (talked.get(pair) ?? 0) + 1);
   call.endsAt = call.startedAt + CALL_MS;
   call.timer = setTimeout(() => end(call, 'time'), CALL_MS);
   for (const id of [call.male, call.female]) {
@@ -637,12 +646,30 @@ setInterval(() => {
   for (const person of people.values()) for (const res of person.lines) write(res, 'online', view);
 }, 15_000).unref();
 
+/**
+ * Counts every pair's connected calls from the history, so the limit on
+ * talking to the same person survives a restart. Called once at start-up.
+ */
+export async function loadTalkedCounts(): Promise<void> {
+  const pairs = await MatchCall.aggregate<{
+    _id: { male: unknown; female: unknown };
+    count: number;
+  }>([
+    { $match: { startedAt: { $ne: null } } },
+    { $group: { _id: { male: '$male', female: '$female' }, count: { $sum: 1 } } },
+  ]);
+  for (const pair of pairs) {
+    talked.set(pairKey(String(pair._id.male), String(pair._id.female)), pair.count);
+  }
+}
+
 /** For tests: the hub back to empty. */
 export function resetMatchHub(): void {
   for (const call of calls.values()) if (call.timer) clearTimeout(call.timer);
   people.clear();
   calls.clear();
   recent.clear();
+  talked.clear();
   queues.male = [];
   queues.female = [];
 }
