@@ -14,8 +14,24 @@ import { isOnline, onArrival } from './matchHub';
  * account — and does nothing if the keys are not configured.
  */
 
-const ready = Boolean(env.vapid.publicKey && env.vapid.privateKey);
-if (ready) webpush.setVapidDetails(env.vapid.subject, env.vapid.publicKey, env.vapid.privateKey);
+/* A bare email is accepted as the subject; web-push wants it as a mailto: URL. */
+const subject = /^(mailto:|https?:)/.test(env.vapid.subject)
+  ? env.vapid.subject
+  : `mailto:${env.vapid.subject}`;
+
+/* A mistyped key must not stop the server starting: pings switch off instead. */
+function configure(): boolean {
+  if (!env.vapid.publicKey || !env.vapid.privateKey) return false;
+  try {
+    webpush.setVapidDetails(subject, env.vapid.publicKey, env.vapid.privateKey);
+    return true;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(`[match] pings are off — check the VAPID settings: ${(error as Error).message}`);
+    return false;
+  }
+}
+const ready = configure();
 
 export const pushPublicKey = () => (ready ? env.vapid.publicKey : null);
 
