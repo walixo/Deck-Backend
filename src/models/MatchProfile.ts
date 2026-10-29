@@ -1,8 +1,9 @@
 import mongoose, { Schema, type Document, type Model } from 'mongoose';
 
 /**
- * A person's Match settings: which section they talk from, the LagosLife
- * username they may choose to share, and who they never want to hear again.
+ * A person's Match settings: which section they talk from, the X and
+ * Instagram usernames they may choose to share, and who they never want to
+ * hear again.
  *
  * Gender is set once. It decides who a person is matched with, so letting it
  * change at will would let anyone hop queues; someone who chose wrong asks
@@ -12,12 +13,19 @@ import mongoose, { Schema, type Document, type Model } from 'mongoose';
 export const MATCH_GENDERS = ['male', 'female'] as const;
 export type MatchGender = (typeof MATCH_GENDERS)[number];
 
+/** Where two people carry on after a call. Either may be empty, not both, to share. */
+export interface MatchHandles {
+  x: string;
+  instagram: string;
+}
+
 export interface IMatchProfile extends Document {
   _id: mongoose.Types.ObjectId;
   user: mongoose.Types.ObjectId;
   gender: MatchGender;
-  /** Without the @. Empty until they add one; needed only to share. */
-  lagosLife: string;
+  /** Usernames without the @. Empty until added; at least one is needed to share. */
+  x: string;
+  instagram: string;
   /** When they confirmed they are 18 or older. */
   adultAt: Date;
   /** People this person blocked, by user id. Matching skips them both ways. */
@@ -36,7 +44,8 @@ const profileSchema = new Schema<IMatchProfile>(
   {
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
     gender: { type: String, enum: MATCH_GENDERS, required: true },
-    lagosLife: { type: String, default: '', trim: true, maxlength: 30 },
+    x: { type: String, default: '', trim: true, maxlength: 15 },
+    instagram: { type: String, default: '', trim: true, maxlength: 30 },
     adultAt: { type: Date, required: true },
     blocked: { type: [Schema.Types.ObjectId], ref: 'User', default: [] },
     bannedUntil: { type: Date, default: null },

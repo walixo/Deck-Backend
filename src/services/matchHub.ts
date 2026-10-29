@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { Response } from 'express';
 import { env } from '../config/env';
 import { MatchCall, type MatchEndReason } from '../models/MatchCall';
-import { MatchDay, type MatchGender } from '../models/MatchProfile';
+import { MatchDay, type MatchGender, type MatchHandles } from '../models/MatchProfile';
 import { ApiError } from '../utils/ApiError';
 import { hoursAt, matchDay } from './matchHours';
 
@@ -19,7 +19,7 @@ import { hoursAt, matchDay } from './matchHours';
  * relaying their WebRTC offer, answer and network candidates, then keeps the
  * clock: two minutes from the moment both say they can hear each other, after
  * which it ends the call for both. Only a call that ran out its time opens a
- * share window, and LagosLife usernames are revealed only if both press share.
+ * share window, and X and Instagram usernames are revealed only if both press share.
  *
  * Match keeps evening hours (see `matchHours.ts`): nobody joins a line while
  * it is closed, the lines empty at closing time, and calls already running
@@ -36,7 +36,6 @@ export type MatchState = 'idle' | 'waiting' | 'calling';
 interface Person {
   userId: string;
   gender: MatchGender;
-  handle: string;
   blocked: Set<string>;
   lines: Set<Response>;
   state: MatchState;
@@ -58,7 +57,7 @@ interface Call {
   state: 'connecting' | 'live' | 'ended';
   endReason: MatchEndReason | null;
   shareUntil: number;
-  shares: Map<string, string>;
+  shares: Map<string, MatchHandles>;
   revealed: boolean;
   /** Who pressed +1 minute. Both, once per call, adds a minute. */
   extendVotes: Set<string>;
@@ -197,7 +196,6 @@ function snapshot(person: Person) {
 export interface Presence {
   userId: string;
   gender: MatchGender;
-  handle: string;
   blocked: string[];
 }
 
@@ -218,7 +216,6 @@ export function attach(presence: Presence, res: Response): void {
     person = {
       userId: presence.userId,
       gender: presence.gender,
-      handle: presence.handle,
       blocked: new Set(presence.blocked),
       lines: new Set(),
       state: 'idle',
@@ -248,11 +245,10 @@ export function attach(presence: Presence, res: Response): void {
   });
 }
 
-/** A profile changed — a new username, a new block — and the hub should know. */
+/** A profile changed — a new block — and the hub should know. */
 export function update(presence: Presence): void {
   const person = people.get(presence.userId);
   if (!person) return;
-  person.handle = presence.handle;
   person.blocked = new Set(presence.blocked);
 }
 
@@ -512,17 +508,23 @@ export function partner(userId: string, callId: string): string {
  * Presses share. Nothing is revealed until both have; then each hears the
  * other's username. Open only after a call that ran its full two minutes.
  */
-export function share(userId: string, callId: string, handle: string): { revealed: boolean } {
+export function share(
+  userId: string,
+  callId: string,
+  handles: MatchHandles,
+): { revealed: boolean } {
   const call = inCall(userId, callId);
   if (call.endReason !== 'time')
     throw ApiError.conflict('You can share once your two minutes are up');
   if (Date.now() > call.shareUntil) throw ApiError.conflict('The time to share has passed');
-  if (!handle) throw ApiError.badRequest('Add your LagosLife username first');
-  call.shares.set(userId, handle);
+  if (!handles.x && !handles.instagram) {
+    throw ApiError.badRequest('Add your X or Instagram username first');
+  }
+  call.shares.set(userId, handles);
   if (call.shares.size === 2 && !call.revealed) {
     call.revealed = true;
     for (const id of [call.male, call.female]) {
-      tell(id, 'revealed', { callId, handle: call.shares.get(partnerOf(call, id)) });
+      tell(id, 'revealed', { callId, handles: call.shares.get(partnerOf(call, id)) });
     }
   }
   return { revealed: call.revealed };

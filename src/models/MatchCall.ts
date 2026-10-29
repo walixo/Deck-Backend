@@ -2,7 +2,7 @@ import mongoose, { Schema, type Document, type Model } from 'mongoose';
 
 /**
  * One two-minute conversation on Match, kept for the record: who talked, for
- * how long, how it ended, and whether they swapped LagosLife usernames.
+ * how long, how it ended, and whether they swapped usernames.
  *
  * The voices themselves never touch Deck — they travel browser to browser —
  * so there is nothing here to listen back to. The live state of a call lives

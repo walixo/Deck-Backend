@@ -2,27 +2,46 @@ import { z } from 'zod';
 import { MATCH_REPORT_REASONS } from '../models/MatchCall';
 import { MATCH_GENDERS } from '../models/MatchProfile';
 
-/** A LagosLife username, typed with or without its @, stored without. Empty clears it. */
-const lagosLifeField = z
-  .string()
-  .trim()
-  .transform((value) => value.replace(/^@/, ''))
-  .refine(
-    (value) => value === '' || /^[A-Za-z0-9._]{2,30}$/.test(value),
-    'Usernames are 2–30 letters, numbers, dots or underscores',
-  );
+/**
+ * A username typed with or without its @, or pasted as a profile link; stored
+ * bare. Empty clears it.
+ */
+const handleField = (site: RegExp, pattern: RegExp, message: string) =>
+  z
+    .string()
+    .trim()
+    .transform((value) =>
+      value
+        .replace(site, '')
+        .replace(/^@/, '')
+        .replace(/[/?#].*$/, ''),
+    )
+    .refine((value) => value === '' || pattern.test(value), message);
+
+const xField = handleField(
+  /^(https?:\/\/)?(www\.)?(x|twitter)\.com\//i,
+  /^[A-Za-z0-9_]{1,15}$/,
+  'X usernames are up to 15 letters, numbers or underscores',
+);
+const instagramField = handleField(
+  /^(https?:\/\/)?(www\.)?instagram\.com\//i,
+  /^[A-Za-z0-9._]{1,30}$/,
+  'Instagram usernames are up to 30 letters, numbers, dots or underscores',
+);
 
 export const createMatchProfileSchema = z
   .object({
     gender: z.enum(MATCH_GENDERS),
-    lagosLife: lagosLifeField.optional(),
+    x: xField.optional(),
+    instagram: instagramField.optional(),
     adult: z.literal(true, { errorMap: () => ({ message: 'Match is for people 18 and over' }) }),
   })
   .strict();
 
 export const updateMatchProfileSchema = z
   .object({
-    lagosLife: lagosLifeField,
+    x: xField.optional(),
+    instagram: instagramField.optional(),
     /* Accepted so a client may resend its whole form; a different value is refused. */
     gender: z.enum(MATCH_GENDERS).optional(),
   })

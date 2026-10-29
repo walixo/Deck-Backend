@@ -34,7 +34,8 @@ const banned = (profile: IMatchProfile) =>
 function toProfileResponse(profile: IMatchProfile, pings = false) {
   return {
     gender: profile.gender,
-    lagosLife: profile.lagosLife,
+    x: profile.x,
+    instagram: profile.instagram,
     bannedUntil: banned(profile) ? profile.bannedUntil : null,
     sectionRequested: Boolean(profile.sectionRequest),
     pings,
@@ -44,7 +45,6 @@ function toProfileResponse(profile: IMatchProfile, pings = false) {
 const presence = (profile: IMatchProfile): hub.Presence => ({
   userId: String(profile.user),
   gender: profile.gender,
-  handle: profile.lagosLife,
   blocked: profile.blocked.map(String),
 });
 
@@ -111,7 +111,8 @@ export async function createMe(req: Request, res: Response): Promise<void> {
     if (existing.gender !== input.gender) {
       throw ApiError.conflict('Your section is already set');
     }
-    if (input.lagosLife !== undefined) existing.lagosLife = input.lagosLife;
+    if (input.x !== undefined) existing.x = input.x;
+    if (input.instagram !== undefined) existing.instagram = input.instagram;
     await existing.save();
     hub.update(presence(existing));
     res.json({ success: true, data: toProfileResponse(existing) });
@@ -120,13 +121,14 @@ export async function createMe(req: Request, res: Response): Promise<void> {
   const profile = await MatchProfile.create({
     user: req.user!._id,
     gender: input.gender,
-    lagosLife: input.lagosLife ?? '',
+    x: input.x ?? '',
+    instagram: input.instagram ?? '',
     adultAt: new Date(),
   });
   res.status(201).json({ success: true, data: toProfileResponse(profile) });
 }
 
-/** Changes the LagosLife username. The section stays as it was set. */
+/** Changes the X or Instagram username. The section stays as it was set. */
 export async function updateMe(req: Request, res: Response): Promise<void> {
   const input = req.body as UpdateMatchProfileInput;
   const profile = await MatchProfile.findOne({ user: req.user!._id });
@@ -134,7 +136,8 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
   if (input.gender && input.gender !== profile.gender) {
     throw ApiError.conflict('Your section is already set');
   }
-  profile.lagosLife = input.lagosLife;
+  if (input.x !== undefined) profile.x = input.x;
+  if (input.instagram !== undefined) profile.instagram = input.instagram;
   await profile.save();
   hub.update(presence(profile));
   res.json({ success: true, data: toProfileResponse(profile) });
@@ -183,7 +186,10 @@ export function leaveCall(req: Request, res: Response): void {
 export async function share(req: Request, res: Response): Promise<void> {
   const profile = await ready(req);
   const callId = String(req.params.callId);
-  const result = hub.share(String(req.user!._id), callId, profile.lagosLife);
+  const result = hub.share(String(req.user!._id), callId, {
+    x: profile.x,
+    instagram: profile.instagram,
+  });
   await MatchCall.updateOne(
     { callId },
     {
@@ -250,15 +256,17 @@ export async function matches(req: Request, res: Response): Promise<void> {
     .sort({ revealedAt: -1 })
     .limit(30);
   const others = calls.map((call) => (String(call.male) === String(me) ? call.female : call.male));
-  const profiles = await MatchProfile.find({ user: { $in: others } }).select('user lagosLife');
-  const handles = new Map(profiles.map((p) => [String(p.user), p.lagosLife]));
+  const profiles = await MatchProfile.find({ user: { $in: others } }).select('user x instagram');
+  const handles = new Map(
+    profiles.map((p) => [String(p.user), { x: p.x, instagram: p.instagram }]),
+  );
   res.json({
     success: true,
     data: calls
       .map((call, index) => ({
-        handle: handles.get(String(others[index])) ?? '',
+        handles: handles.get(String(others[index])) ?? { x: '', instagram: '' },
         at: call.revealedAt,
       }))
-      .filter((match) => match.handle),
+      .filter((match) => match.handles.x || match.handles.instagram),
   });
 }

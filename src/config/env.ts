@@ -209,7 +209,7 @@ export const env = {
 
   /*
    * Match: how long two people talk, and how long afterwards they may choose
-   * to swap LagosLife usernames. Settable so a test need not wait two minutes.
+   * to swap X and Instagram usernames. Settable so a test need not wait two minutes.
    */
   matchCallSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_CALL_SECONDS ?? 120))),
   matchShareSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_SHARE_SECONDS ?? 90))),

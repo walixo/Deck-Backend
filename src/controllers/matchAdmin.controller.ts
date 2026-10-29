@@ -113,7 +113,7 @@ export async function matchReports(_req: Request, res: Response): Promise<void> 
   const open = await MatchReport.find({ status: 'open' }).sort({ createdAt: -1 }).limit(500).lean();
   const ids = [...new Set(open.map((r) => String(r.reported)))];
   const pausedProfiles = await MatchProfile.find({ bannedUntil: { $gt: new Date() } })
-    .select('user gender lagosLife bannedUntil')
+    .select('user gender x instagram bannedUntil')
     .lean();
   const everyone = [...new Set([...ids, ...pausedProfiles.map((p) => String(p.user))])].map(
     (id) => new mongoose.Types.ObjectId(id),
@@ -124,7 +124,7 @@ export async function matchReports(_req: Request, res: Response): Promise<void> 
       .select(PEOPLE_FIELDS)
       .lean(),
     MatchProfile.find({ user: { $in: everyone } })
-      .select('user gender lagosLife bannedUntil')
+      .select('user gender x instagram bannedUntil')
       .lean(),
     MatchCall.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
       { $match: { $or: [{ male: { $in: everyone } }, { female: { $in: everyone } }] } },
@@ -159,7 +159,8 @@ export async function matchReports(_req: Request, res: Response): Promise<void> 
       email: user?.email ?? '',
       username: user?.username ?? '',
       gender: profile?.gender ?? null,
-      lagosLife: profile?.lagosLife ?? '',
+      x: profile?.x ?? '',
+      instagram: profile?.instagram ?? '',
       pausedUntil:
         profile?.bannedUntil && profile.bannedUntil > new Date() ? profile.bannedUntil : null,
       history: {
