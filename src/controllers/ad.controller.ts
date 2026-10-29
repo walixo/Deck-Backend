@@ -17,6 +17,7 @@ import { bachsConfigured, checkoutReturnUrls, createCheckout } from '../services
 import { toAdCampaignResponse, toServedAdResponse } from '../serializers';
 import { ApiError } from '../utils/ApiError';
 import type { CreateAdInput, PullAdInput, RejectAdInput } from '../validators/ad.validators';
+import { assertClaimed } from '../utils/itemScope';
 
 /** Same alphabet as every other Deck reference: no 0/O/1/I. */
 function adReference(): string {
@@ -67,6 +68,7 @@ export async function createAd(req: Request, res: Response): Promise<void> {
   if (item.submittedBy.toString() !== user._id.toString() && user.role !== 'admin') {
     throw ApiError.forbidden('You can only advertise your own launches');
   }
+  assertClaimed(item, 'advertise it');
 
   const startAt = input.startAt ? new Date(input.startAt) : new Date();
   if (startAt.getTime() < Date.now() - DAY_MS) {

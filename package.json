@@ -28,6 +28,8 @@
     "seed-games": "tsx src/scripts/seed-games.ts",
     "seed-categories": "tsx src/scripts/seed-categories.ts",
     "seed-categories:prod": "node dist/scripts/seed-categories.js",
+    "import-candidates": "tsx src/scripts/import-candidates.ts",
+    "import-candidates:prod": "node dist/scripts/import-candidates.js",
     "gameid:key": "node scripts/gameid-key.mjs"
   },
   "dependencies": {

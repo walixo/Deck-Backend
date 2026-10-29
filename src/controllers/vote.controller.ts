@@ -4,6 +4,7 @@ import { Vote } from '../models/Vote';
 import { evaluateBadges } from '../services/badges';
 import { milestoneFor, notify } from '../services/notify';
 import { ApiError } from '../utils/ApiError';
+import { isUnclaimedImport } from '../utils/itemScope';
 
 /** Toggles the viewer's upvote and returns the fresh count. */
 export async function toggleVote(req: Request, res: Response): Promise<void> {
@@ -37,7 +38,8 @@ export async function toggleVote(req: Request, res: Response): Promise<void> {
    * vote being added rather than removed, so a launch hovering on the
    * threshold cannot ring the bell every time one person changes their mind.
    */
-  const milestone = existing ? null : milestoneFor(item.voteCount);
+  /* Nobody to tell on an unclaimed import: its owner is Deck Index. */
+  const milestone = existing || isUnclaimedImport(item) ? null : milestoneFor(item.voteCount);
   if (milestone) {
     void notify({
       user: item.submittedBy,

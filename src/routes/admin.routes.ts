@@ -70,6 +70,22 @@ import { reviewCustomDesignSchema } from '../validators/custom.validators';
 import { rescheduleItemSchema, setFutureGenSchema } from '../validators/item.validators';
 import { createPostSchema, updatePostSchema } from '../validators/post.validators';
 import { reviewGameSchema } from '../validators/game.validators';
+import {
+  createCandidate,
+  listCandidates,
+  listListingRequests,
+  publishImport,
+  rejectImport,
+  resolveListingRequest,
+  searchFounders,
+  updateCandidate,
+} from '../controllers/import.controller';
+import {
+  candidateSchema,
+  rejectCandidateSchema,
+  resolveListingRequestSchema,
+  updateCandidateSchema,
+} from '../validators/import.validators';
 
 const router = Router();
 
@@ -115,6 +131,21 @@ router.patch(
 
 /* Custom prints. The one review that ends with a parcel in the post carrying
    Deck's return address, so it is gated and audited like the money ones. */
+/* Imported listings: the staging queue, founder lookup, and the requests the
+   public sends about listings Deck made. See controllers/import.controller. */
+router.get('/imports', asyncHandler(listCandidates));
+router.post('/imports', validate(candidateSchema), asyncHandler(createCandidate));
+router.patch('/imports/:id', validate(updateCandidateSchema), asyncHandler(updateCandidate));
+router.post('/imports/:id/publish', asyncHandler(publishImport));
+router.post('/imports/:id/reject', validate(rejectCandidateSchema), asyncHandler(rejectImport));
+router.get('/founders', asyncHandler(searchFounders));
+router.get('/listing-requests', asyncHandler(listListingRequests));
+router.patch(
+  '/listing-requests/:id',
+  validate(resolveListingRequestSchema),
+  asyncHandler(resolveListingRequest),
+);
+
 router.get('/custom', asyncHandler(listCustomQueue));
 router.patch(
   '/custom/:reference',

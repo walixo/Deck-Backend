@@ -6,6 +6,7 @@ import { Contribution } from '../models/Contribution';
 import { Item } from '../models/Item';
 import { Order } from '../models/Order';
 import { Vote } from '../models/Vote';
+import { COMPETING } from '../utils/itemScope';
 
 export type BadgeMetrics = Record<BadgeMetric, number>;
 
@@ -22,7 +23,10 @@ export async function metricsFor(userId: mongoose.Types.ObjectId | string): Prom
   const [items, votesGiven, commentsWritten, contributionsMade, merchSold] = await Promise.all([
     /* launchDateKey is load-bearing: the board-finish aggregation matches on it,
        and leaving it out of the projection silently makes every day unmatchable. */
-    Item.find({ submittedBy: user }).select(
+    /* Launched on Deck only. A listing Deck imported and its founder later
+       claimed arrives with a past it did not earn here, so it counts towards
+       nobody's badges — and a board finish against one would be no finish. */
+    Item.find({ ...COMPETING, submittedBy: user }).select(
       'voteCount ratingAvg reviewCount fundraise launchDateKey',
     ),
     Vote.countDocuments({ user }),
@@ -46,6 +50,7 @@ export async function metricsFor(userId: mongoose.Types.ObjectId | string): Prom
     ? await Item.aggregate<{ _id: string; ranked: { id: string; votes: number }[] }>([
         {
           $match: {
+            ...COMPETING,
             launchDateKey: { $in: [...new Set(items.map((i) => i.launchDateKey))] },
           },
         },

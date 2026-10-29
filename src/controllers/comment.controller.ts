@@ -8,6 +8,7 @@ import { evaluateBadges } from '../services/badges';
 import { excerpt, notify } from '../services/notify';
 import { ApiError } from '../utils/ApiError';
 import type { CreateCommentInput } from '../validators/comment.validators';
+import { isUnclaimedImport } from '../utils/itemScope';
 
 /* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
    leaving it out does not omit the field — it sends `verified: false` for every
@@ -70,6 +71,8 @@ async function announceComment(
   }
 
   if (told.has(item.submittedBy.toString())) return;
+  /* An unclaimed import is owned by Deck Index, not a person to tell. */
+  if (isUnclaimedImport(item)) return;
 
   /* A comment carrying a rating is a review, and reads differently to its
      recipient — "rated it 4 stars" is the headline, not "said something". */

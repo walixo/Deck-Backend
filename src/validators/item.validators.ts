@@ -139,6 +139,19 @@ export const listItemsSchema = z.object({
     .trim()
     .regex(/^\d{4}(-\d{2}(-\d{2})?)?$/, 'Dates look like 2026, 2026-08 or 2026-08-15')
     .optional(),
+  /*
+   * `deck` keeps to launches makers posted themselves — what the landing page's
+   * feeds want, since they describe every name as somebody's launch. Absent,
+   * the list is the whole catalogue, imported listings included.
+   */
+  source: z.enum(['deck', 'imported']).optional(),
+  /* ISO 3166-1 alpha-2, for the African catalogue's country filter. */
+  country: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{2}$/)
+    .optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(48).default(12),
 });

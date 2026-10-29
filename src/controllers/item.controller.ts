@@ -23,6 +23,7 @@ import type {
   UpdateItemInput,
   UpdateRevenueInput,
 } from '../validators/item.validators';
+import { assertClaimed, COMPETING } from '../utils/itemScope';
 
 /* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
    leaving it out does not omit the field — it sends `verified: false` for every
@@ -47,6 +48,9 @@ function buildFilter(query: ListItemsQuery): FilterQuery<IItem> {
   if (query.tag) filter.tags = query.tag;
   if (query.featured !== undefined) filter.featured = query.featured;
   if (query.futureGen !== undefined) filter.futureGen = query.futureGen;
+  if (query.source === 'deck') Object.assign(filter, COMPETING);
+  if (query.source === 'imported') filter.source = 'imported';
+  if (query.country) filter.country = query.country;
 
   /*
    * Date scoping, as a prefix match on the denormalised day key.
@@ -58,6 +62,9 @@ function buildFilter(query: ListItemsQuery): FilterQuery<IItem> {
    */
   if (query.on) {
     filter.launchDateKey = query.on.length === 10 ? query.on : new RegExp(`^${query.on}`);
+    /* A day in the archive is a board day, and imported listings were never
+       on a board — their launch date is history, not a day they competed. */
+    if (query.source !== 'imported') Object.assign(filter, COMPETING);
   }
 
   if (query.search) {
@@ -171,7 +178,9 @@ export async function getSpotlight(req: Request, res: Response): Promise<void> {
 export async function getItem(req: Request, res: Response): Promise<void> {
   const { slug } = req.params;
 
-  const item = await Item.findOne({ slug }).populate('submittedBy', SUBMITTER_FIELDS);
+  const item = await Item.findOne({ slug })
+    .populate('submittedBy', SUBMITTER_FIELDS)
+    .populate('founders', 'name slug headline claimedBy');
   if (!item) throw ApiError.notFound('We could not find that launch');
 
   /*
@@ -434,6 +443,7 @@ export async function releaseItem(req: Request, res: Response): Promise<void> {
   if (!isOwner && user.role !== 'admin') {
     throw ApiError.forbidden('Only the person who launched this can ship a new version');
   }
+  assertClaimed(latest, 'ship a new version');
 
   /*
    * Cooldown, measured from the newest version rather than the one being

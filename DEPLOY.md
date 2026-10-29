@@ -314,6 +314,28 @@ It only inserts categories whose slug is missing. It never deletes and never
 overwrites one that exists, so it is safe to re-run, and it will not undo a
 label or order you changed in the admin area.
 
+### Importing listings (optional)
+
+Deck can list products on their founders' behalf, so the catalogue is not empty
+on day one. These are labelled "Listed by Deck" on their page, are owned by a
+system account (`deckindex`, created on first publish) until a founder claims
+them, and never compete: no daily board, no podium, no badges, and they are
+left out of the landing page's numbers.
+
+Nothing goes live without a person. Rows land in a queue at `/admin/imports`,
+from the form there or from a spreadsheet:
+
+```bash
+npm run import-candidates -- --template > africa.csv              # a starter file with every column
+npm run import-candidates:prod -- --file africa.csv --dry-run     # check every row, write nothing
+npm run import-candidates:prod -- --file africa.csv               # queue the good ones
+```
+
+Each row needs a source URL, a category that exists, and a website no other
+launch or queued row already uses; bad rows are reported by line number and
+skipped. Then review and publish them one by one in the admin area. Requests
+from founders ("this is mine", "take it down") arrive in the same place.
+
 ## 4. Bachs (payments and payouts)
 
 Every charge — merch, fundraise contributions, ad slots — goes through a Bachs

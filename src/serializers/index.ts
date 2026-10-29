@@ -16,6 +16,7 @@ import type { IPayout } from '../models/Payout';
 import type { IPost } from '../models/Post';
 import type { IReply, ITopic } from '../models/Topic';
 import type { IUser } from '../models/User';
+import { isUnclaimedImport } from '../utils/itemScope';
 
 export interface PublicUser {
   id: string;
@@ -47,6 +48,19 @@ interface PopulatedItemRef {
 }
 
 function isPopulatedItem(value: unknown): value is PopulatedItemRef {
+  return typeof value === 'object' && value !== null && 'slug' in value && 'name' in value;
+}
+
+/** A founder as it appears beside a product: enough to name and link them. */
+interface PopulatedFounderRef {
+  _id: mongoose.Types.ObjectId;
+  name: string;
+  slug: string;
+  headline?: string;
+  claimedBy?: mongoose.Types.ObjectId | null;
+}
+
+function isPopulatedFounder(value: unknown): value is PopulatedFounderRef {
   return typeof value === 'object' && value !== null && 'slug' in value && 'name' in value;
 }
 
@@ -88,6 +102,26 @@ export function toItemResponse(item: IItem, votedItemIds?: Set<string>) {
     videoUrl: item.videoUrl,
     gallery: item.gallery,
     makers: item.makers,
+    /*
+     * Provenance. `source` decides whether this listing competes and how the
+     * page labels it; `unclaimed` saves every client re-deriving the rule.
+     * `sourceUrls` are public on purpose: a listing Deck wrote about somebody
+     * should show its working, so anyone can check where a fact came from.
+     */
+    source: item.source ?? 'deck',
+    unclaimed: isUnclaimedImport(item),
+    claimedAt: item.claimedAt ?? null,
+    country: item.country,
+    sourceUrls: item.source === 'imported' ? (item.sourceUrls ?? []) : [],
+    /* Populated on the detail page only; lists send none, which is fine —
+       a card never shows founders. */
+    founders: ((item.founders ?? []) as unknown[]).filter(isPopulatedFounder).map((founder) => ({
+      id: founder._id.toString(),
+      name: founder.name,
+      slug: founder.slug,
+      headline: founder.headline,
+      claimed: Boolean(founder.claimedBy),
+    })),
     launchDate: item.launchDate,
     launchDateKey: item.launchDateKey,
     featured: item.featured,

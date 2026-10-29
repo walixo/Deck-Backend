@@ -28,6 +28,7 @@ import sellerRoutes from './seller.routes';
 import shareRoutes from './share.routes';
 import uploadRoutes from './upload.routes';
 import userRoutes from './user.routes';
+import founderRoutes from './founder.routes';
 
 const router = Router();
 
@@ -47,6 +48,7 @@ router.use('/ads', adRoutes);
 router.use('/acquisitions', acquisitionRoutes);
 router.use('/share', shareRoutes);
 router.use('/items', itemRoutes);
+router.use('/founders', founderRoutes);
 router.use('/posts', postRoutes);
 router.use('/comments', commentRoutes);
 router.use('/forum', forumRoutes);

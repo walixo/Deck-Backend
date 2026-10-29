@@ -81,6 +81,18 @@ export const SEED_CATEGORIES = [
  */
 export type Category = string;
 
+/** Who put a launch on Deck — see `source` on the Item model. */
+export const ITEM_SOURCES = ['deck', 'imported'] as const;
+export type ItemSource = (typeof ITEM_SOURCES)[number];
+
+/**
+ * The system account that owns listings Deck imports, until a founder claims
+ * them. A username rather than an id so it is the same on every database; the
+ * account itself is created on first use (`services/indexAccount`) and is left
+ * out of every count of people.
+ */
+export const INDEX_ACCOUNT_USERNAME = 'deckindex';
+
 export const PRICING_MODELS = ['free', 'freemium', 'paid', 'open-source'] as const;
 export type PricingModel = (typeof PRICING_MODELS)[number];
 
@@ -344,6 +356,10 @@ export const AUDIT_ACTIONS = [
   'ad.pulled',
   'item.revenue',
   'payouts.run',
+  'import.published',
+  'import.rejected',
+  'listing.resolved',
+  'listing.dismissed',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -363,6 +379,8 @@ export const AUDIT_TARGETS = [
   'game',
   'match_night',
   'match_gift_card',
+  'import',
+  'listing_request',
 ] as const;
 export type AuditTarget = (typeof AUDIT_TARGETS)[number];
 

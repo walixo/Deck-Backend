@@ -8,6 +8,7 @@ import { BADGES } from '../constants/badges';
 import { BadgeAward } from '../models/BadgeAward';
 import { evaluateBadges, metricsFor } from '../services/badges';
 import { ApiError } from '../utils/ApiError';
+import { COMPETING } from '../utils/itemScope';
 
 /* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
    leaving it out does not omit the field — it sends `verified: false` for every
@@ -92,6 +93,9 @@ export async function getTopMakers(_req: Request, res: Response): Promise<void> 
     votes: number;
     user: { name: string; username: string; avatarUrl?: string; headline?: string }[];
   }>([
+    /* Makers ranked by what they launched; Deck Index, which owns every
+       unclaimed import, is not a maker. */
+    { $match: COMPETING },
     {
       $group: {
         _id: '$submittedBy',

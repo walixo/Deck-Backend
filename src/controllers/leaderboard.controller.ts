@@ -3,6 +3,10 @@ import { Item, type IItem } from '../models/Item';
 import { Vote } from '../models/Vote';
 import { toItemResponse } from '../serializers';
 import { addDays, parseDateParam, startOfUtcDay, toDateKey } from '../utils/date';
+import { COMPETING } from '../utils/itemScope';
+
+/* Every board here is a contest, so every query spreads in COMPETING: listings
+   Deck imported are browsable elsewhere but never take a rank or a day. */
 
 /* `verified` is load-bearing in this projection. `toPublicUser` reads it, so
    leaving it out does not omit the field — it sends `verified: false` for every
@@ -24,7 +28,7 @@ export async function getDailyLeaderboard(req: Request, res: Response): Promise<
   const dateKey = toDateKey(date);
   const limit = Math.min(Number(req.query.limit ?? 20) || 20, 50);
 
-  const items = await Item.find({ launchDateKey: dateKey })
+  const items = await Item.find({ ...COMPETING, launchDateKey: dateKey })
     .sort({ voteCount: -1, commentCount: -1, createdAt: 1 })
     .limit(limit)
     .populate('submittedBy', SUBMITTER_FIELDS);
@@ -40,7 +44,7 @@ export async function getDailyLeaderboard(req: Request, res: Response): Promise<
       isToday: dateKey === today,
       previousDate: toDateKey(addDays(startOfUtcDay(date), -1)),
       nextDate: dateKey === today ? null : toDateKey(addDays(startOfUtcDay(date), 1)),
-      totalLaunches: await Item.countDocuments({ launchDateKey: dateKey }),
+      totalLaunches: await Item.countDocuments({ ...COMPETING, launchDateKey: dateKey }),
     },
   });
 }
@@ -51,7 +55,8 @@ export async function getPeriodLeaderboard(req: Request, res: Response): Promise
   const limit = Math.min(Number(req.query.limit ?? 10) || 10, 50);
 
   const days = period === 'month' ? 30 : period === 'year' ? 365 : period === 'all' ? null : 7;
-  const filter = days === null ? {} : { launchDate: { $gte: addDays(new Date(), -days) } };
+  const filter =
+    days === null ? COMPETING : { ...COMPETING, launchDate: { $gte: addDays(new Date(), -days) } };
 
   const items = await Item.find(filter)
     .sort({ voteCount: -1, commentCount: -1 })
@@ -70,6 +75,7 @@ export async function getPeriodLeaderboard(req: Request, res: Response): Promise
 /** Recent days that actually have launches — powers the leaderboard date switcher. */
 export async function getLeaderboardDates(_req: Request, res: Response): Promise<void> {
   const rows = await Item.aggregate<{ _id: string; count: number; votes: number }>([
+    { $match: COMPETING },
     { $group: { _id: '$launchDateKey', count: { $sum: 1 }, votes: { $sum: '$voteCount' } } },
     { $sort: { _id: -1 } },
     { $limit: 14 },
@@ -96,7 +102,10 @@ export async function getLeaderboardDates(_req: Request, res: Response): Promise
  * an indexed field, not a per-day query.
  */
 export async function getLaunchArchive(_req: Request, res: Response): Promise<void> {
+  /* Board days only. An imported listing carries its real launch date, often
+     years before Deck existed, and it was never on a board that day. */
   const rows = await Item.aggregate<{ _id: string; count: number }>([
+    { $match: COMPETING },
     { $group: { _id: '$launchDateKey', count: { $sum: 1 } } },
     { $sort: { _id: -1 } },
   ]);

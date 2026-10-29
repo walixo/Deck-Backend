@@ -21,6 +21,7 @@ import type {
   ReviewFundraiseInput,
   UpdateFundraiseInput,
 } from '../validators/fundraise.validators';
+import { assertClaimed } from '../utils/itemScope';
 
 /** Same alphabet as order references: no 0/O/1/I, safe to read aloud. */
 function contributionReference(): string {
@@ -45,6 +46,7 @@ export async function updateFundraise(req: Request, res: Response): Promise<void
   if (item.submittedBy.toString() !== user._id.toString() && user.role !== 'admin') {
     throw ApiError.forbidden('That launch belongs to someone else');
   }
+  assertClaimed(item, 'raise money for it');
 
   const before = {
     enabled: item.fundraise.enabled,

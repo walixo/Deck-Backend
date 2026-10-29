@@ -36,6 +36,9 @@ import {
   updateItemSchema,
   updateRevenueSchema,
 } from '../validators/item.validators';
+import { createListingRequest } from '../controllers/import.controller';
+import { rateLimit } from '../middleware/rateLimit';
+import { listingRequestSchema } from '../validators/import.validators';
 
 const router = Router();
 
@@ -58,6 +61,17 @@ router.patch(
 router.delete('/:id', asyncHandler(requireAuth), asyncHandler(deleteItem));
 
 router.post('/:id/vote', asyncHandler(requireAuth), asyncHandler(toggleVote));
+
+/* "This is mine" / "take this down" on a listing Deck imported. Open to anyone,
+   signed in or not — a founder finding their product here may not have an
+   account yet — so it is limited per address. */
+router.post(
+  '/:slug/listing-requests',
+  rateLimit({ windowMs: 60 * 60_000, max: 5, message: 'Too many requests — try again later' }),
+  asyncHandler(optionalAuth),
+  validate(listingRequestSchema),
+  asyncHandler(createListingRequest),
+);
 
 /* Raising money. The launcher opts in and out; anyone signed in can back it. */
 router.patch(

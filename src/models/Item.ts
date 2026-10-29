@@ -1,5 +1,12 @@
 import mongoose, { Schema, type Document, type Model } from 'mongoose';
-import { CURRENCY, PRICING_MODELS, type Category, type PricingModel } from '../constants';
+import {
+  CURRENCY,
+  ITEM_SOURCES,
+  PRICING_MODELS,
+  type Category,
+  type ItemSource,
+  type PricingModel,
+} from '../constants';
 
 /**
  * The launcher's optional fundraise.
@@ -83,6 +90,20 @@ export interface IItem extends Document {
   gallery: string[];
   makers: string[];
   submittedBy: mongoose.Types.ObjectId;
+  /**
+   * Who put this launch on Deck: a maker (`deck`), or Deck listing a product on
+   * its founders' behalf (`imported`). Imported launches are browsable but never
+   * compete — see the note on the schema field.
+   */
+  source: ItemSource;
+  /** For imported launches: where the facts came from. */
+  sourceUrls: string[];
+  /** Founder records behind an imported launch. `makers` stays free text. */
+  founders: mongoose.Types.ObjectId[];
+  /** ISO 3166-1 alpha-2 of where the product is built, when declared. */
+  country?: string;
+  /** When a founder proved an imported launch is theirs. Null while unclaimed. */
+  claimedAt: Date | null;
   lineage: mongoose.Types.ObjectId;
   version?: string;
   supersedes: mongoose.Types.ObjectId | null;
@@ -200,6 +221,31 @@ const itemSchema = new Schema<IItem>(
     gallery: [{ type: String, trim: true }],
     makers: [{ type: String, trim: true, maxlength: 60 }],
     submittedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+
+    /*
+     * Where this launch came from.
+     *
+     * `imported` launches are products Deck listed itself — found in the press,
+     * on GitHub, in an accelerator cohort — so that the board is not empty while
+     * it waits for makers. They are real products, so they are browsable:
+     * Discover, the category pages, search and their own page all show them.
+     *
+     * They are not launches anybody entered into a contest, so they never
+     * compete. No daily board, no podium, no medals, no badges, no vote
+     * milestones, and they are left out of the community numbers on the landing
+     * page. Every one of those exclusions keys off this field, so a listing
+     * Deck made can never be mistaken for traction somebody earned.
+     *
+     * Owned by the Deck Index system account (see `services/indexAccount`)
+     * until a founder claims it; claiming moves `submittedBy` to them and sets
+     * `claimedAt`, and the listing stays `imported` because how it arrived does
+     * not change.
+     */
+    source: { type: String, enum: ITEM_SOURCES, default: 'deck', index: true },
+    sourceUrls: [{ type: String, trim: true, maxlength: 500 }],
+    founders: [{ type: Schema.Types.ObjectId, ref: 'Founder' }],
+    country: { type: String, trim: true, uppercase: true, match: /^[A-Z]{2}$/ },
+    claimedAt: { type: Date, default: null },
 
     /*
      * Which product this launch is a version of.
