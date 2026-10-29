@@ -337,6 +337,8 @@ export const AUDIT_ACTIONS = [
   'match.night.removed',
   'match.verification.approved',
   'match.verification.declined',
+  'match.giftcards.issued',
+  'match.giftcard.voided',
   'ad.approved',
   'ad.rejected',
   'ad.pulled',
@@ -360,6 +362,7 @@ export const AUDIT_TARGETS = [
   'custom',
   'game',
   'match_night',
+  'match_gift_card',
 ] as const;
 export type AuditTarget = (typeof AUDIT_TARGETS)[number];
 

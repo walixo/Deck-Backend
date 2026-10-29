@@ -64,6 +64,9 @@ auditEventSchema.index({ createdAt: -1 });
 auditEventSchema.index({ actor: 1, createdAt: -1 });
 auditEventSchema.index({ targetType: 1, targetId: 1, createdAt: -1 });
 
+/* Kept two years, as the privacy policy says, then Mongo deletes each event. */
+auditEventSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2 * 365 * 24 * 60 * 60 });
+
 /*
  * Immutability, enforced where it cannot be forgotten.
  *

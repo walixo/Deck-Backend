@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { MatchCall, MatchReport } from '../models/MatchCall';
 import {
   MatchEntry,
+  MatchGiftCard,
   MatchLedger,
   MatchNight,
   MatchTopup,
@@ -358,6 +359,10 @@ export async function matchRevenue(req: Request, res: Response): Promise<void> {
     MatchProfile.countDocuments({ plusUntil: { $gt: new Date() } }),
     MatchProfile.countDocuments({ verifiedAt: { $ne: null } }),
   ]);
+  const giftCards = await MatchGiftCard.aggregate<{ _id: null; minor: number; count: number }>([
+    { $match: { mode: 'live', status: { $in: ['active', 'redeemed'] }, paidAt: { $gte: since } } },
+    { $group: { _id: null, minor: { $sum: '$priceMinor' }, count: { $sum: 1 } } },
+  ]);
   /* Refunds hand credit back, so they come off what was spent. */
   const refunds = await MatchLedger.aggregate<{ _id: null; minor: number }>([
     { $match: { createdAt: { $gte: since }, kind: 'refund' } },
@@ -375,6 +380,8 @@ export async function matchRevenue(req: Request, res: Response): Promise<void> {
       byKind,
       topupsMinor: topups[0]?.minor ?? 0,
       topups: topups[0]?.count ?? 0,
+      giftCardsMinor: giftCards[0]?.minor ?? 0,
+      giftCards: giftCards[0]?.count ?? 0,
       /* Credit people hold and have not spent yet. */
       outstandingMinor: credit[0]?.minor ?? 0,
       plusMembers: members,

@@ -1,3 +1,9 @@
+import {
+  issueMatchGiftCards,
+  listMatchGiftCards,
+  matchGiftCardBatch,
+  voidMatchGiftCard,
+} from '../controllers/matchGiftCardsAdmin.controller';
 import { Router } from 'express';
 import {
   getOverview,
@@ -37,6 +43,7 @@ import {
   unpauseMatchUser,
 } from '../controllers/matchAdmin.controller';
 import {
+  matchGiftCardIssueSchema,
   matchNightSchema,
   matchPauseSchema,
   matchSectionSchema,
@@ -151,6 +158,14 @@ router.get('/match/revenue', asyncHandler(matchRevenue));
 router.get('/match/nights', asyncHandler(listMatchNights));
 router.put('/match/nights', validate(matchNightSchema), asyncHandler(saveMatchNight));
 router.delete('/match/nights/:day', asyncHandler(deleteMatchNight));
+router.get('/match/giftcards', asyncHandler(listMatchGiftCards));
+router.get('/match/giftcards/batch', asyncHandler(matchGiftCardBatch));
+router.post(
+  '/match/giftcards/issue',
+  validate(matchGiftCardIssueSchema),
+  asyncHandler(issueMatchGiftCards),
+);
+router.post('/match/giftcards/:reference/void', asyncHandler(voidMatchGiftCard));
 router.get('/match/verifications', asyncHandler(listMatchVerifications));
 router.post('/match/verifications/:id/approve', asyncHandler(approveMatchVerification));
 router.post(

@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 import {
+  MatchGiftCard,
   MatchLedger,
   MatchTopup,
+  type IMatchGiftCard,
   type IMatchTopup,
   type MatchGiftKind,
   type MatchLedgerKind,
@@ -145,10 +147,10 @@ export async function spendBoth(
   }
 }
 
-/** Thirty more days of Match+, from now or from when the current run ends. */
-export function extendedPlus(current: Date | null, now = Date.now()): Date {
+/** More days of Match+ (thirty by default), from now or from when the current run ends. */
+export function extendedPlus(current: Date | null, now = Date.now(), days = MATCH_PLUS_DAYS): Date {
   const from = current && current.getTime() > now ? current.getTime() : now;
-  return new Date(from + MATCH_PLUS_DAYS * DAY);
+  return new Date(from + days * DAY);
 }
 
 /**
@@ -200,4 +202,152 @@ export async function creditTopup(
     `Topped up ${naira(flipped.amountMinor)}`,
   );
   return flipped;
+}
+
+/* ---------------------------------------------------------- gift cards --- */
+
+/** What a gift card can hold. Credit cards cost what they hold. */
+export const MATCH_GIFT_CARDS = [
+  { id: 'credit-1000', kind: 'credit', valueMinor: 1_000_00, plusDays: 0, priceMinor: 1_000_00 },
+  { id: 'credit-2000', kind: 'credit', valueMinor: 2_000_00, plusDays: 0, priceMinor: 2_000_00 },
+  { id: 'credit-5000', kind: 'credit', valueMinor: 5_000_00, plusDays: 0, priceMinor: 5_000_00 },
+  {
+    id: 'plus-30',
+    kind: 'plus',
+    valueMinor: 0,
+    plusDays: MATCH_PLUS_DAYS,
+    priceMinor: MATCH_PRICES.plus,
+  },
+] as const;
+export type MatchGiftCardProduct = (typeof MATCH_GIFT_CARDS)[number];
+
+/** How long a card can be redeemed after it is paid for or issued. */
+export const MATCH_GIFT_CARD_MONTHS = 12;
+
+export const giftCardProduct = (id: string) => MATCH_GIFT_CARDS.find((card) => card.id === id);
+
+/** What a card holds, in words: "₦2,000 of Match credit", "30 days of Match+". */
+export const giftCardLabel = (card: Pick<IMatchGiftCard, 'kind' | 'valueMinor' | 'plusDays'>) =>
+  card.kind === 'plus'
+    ? `${card.plusDays} days of Match+`
+    : `${naira(card.valueMinor)} of Match credit`;
+
+const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const pick = (length: number) =>
+  Array.from(crypto.randomBytes(length), (byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join(
+    '',
+  );
+
+/** A redeem code: 12 characters (about 59 bits) with no 0/O, 1/I/L to misread. */
+export const giftCardCode = () => `${pick(4)}-${pick(4)}-${pick(4)}`;
+
+/** How people type codes: any case, with or without dashes or spaces. */
+export function normaliseGiftCardCode(raw: string): string {
+  const bare = raw.toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return bare.length === 12 ? `${bare.slice(0, 4)}-${bare.slice(4, 8)}-${bare.slice(8)}` : bare;
+}
+
+export function giftCardReference(): string {
+  return `MATCHGIFT-${pick(6)}`;
+}
+
+function expiryFrom(from: Date): Date {
+  const expires = new Date(from);
+  expires.setMonth(expires.getMonth() + MATCH_GIFT_CARD_MONTHS);
+  return expires;
+}
+
+/** Makes a paid card redeemable, once: the flip from pending is the guard. */
+export async function activateGiftCard(
+  card: IMatchGiftCard,
+  paid: { paidAt: Date; chargeId?: string },
+): Promise<IMatchGiftCard> {
+  const flipped = await MatchGiftCard.findOneAndUpdate(
+    { _id: card._id, status: 'pending' },
+    {
+      status: 'active',
+      paidAt: paid.paidAt,
+      chargeId: paid.chargeId,
+      expiresAt: expiryFrom(paid.paidAt),
+    },
+    { new: true },
+  );
+  return flipped ?? (await MatchGiftCard.findById(card._id)) ?? card;
+}
+
+/** A provider-confirmed payment for a gift card — the same rules as a top-up. */
+export async function applyVerifiedGiftCard(
+  card: IMatchGiftCard,
+  verified: VerifiedPayment,
+): Promise<IMatchGiftCard> {
+  if (card.status !== 'pending') return card;
+  if (verified.status === 'failed') {
+    card.status = 'failed';
+    await card.save();
+    return card;
+  }
+  if (verified.status !== 'success') return card;
+  if (verified.amountMinor < card.priceMinor || verified.currency !== card.currency) {
+    throw new ApiError(
+      409,
+      'The payment amount did not match this gift card. Please contact support.',
+    );
+  }
+  return activateGiftCard(card, {
+    paidAt: verified.paidAt ? new Date(verified.paidAt) : new Date(),
+    chargeId: verified.chargeId ?? undefined,
+  });
+}
+
+/**
+ * Claims a card for `userId`. One guarded update moves it from active to
+ * redeemed, so two people racing the same code cannot both be paid; only then
+ * is the credit or Match+ added.
+ */
+export async function redeemGiftCard(
+  rawCode: string,
+  userId: mongoose.Types.ObjectId | string,
+): Promise<{ card: IMatchGiftCard; creditMinor: number; plusUntil: Date | null }> {
+  /* Checked first: a card claimed by someone with nowhere to put it would be lost. */
+  if (!(await MatchProfile.exists({ user: userId })))
+    throw ApiError.badRequest('Set up Match first');
+  const code = normaliseGiftCardCode(rawCode);
+  const now = new Date();
+  const card = await MatchGiftCard.findOneAndUpdate(
+    { code, status: 'active', expiresAt: { $gt: now } },
+    { status: 'redeemed', redeemedBy: userId, redeemedAt: now },
+    { new: true },
+  );
+  if (!card) {
+    const known = await MatchGiftCard.findOne({ code });
+    throw ApiError.badRequest(
+      !known || known.status === 'pending' || known.status === 'failed'
+        ? 'That code isn’t right. Check it and try again.'
+        : known.status === 'redeemed'
+          ? 'That gift card has already been used.'
+          : known.status === 'void'
+            ? 'That gift card has been cancelled.'
+            : 'That gift card has expired.',
+    );
+  }
+  const label = giftCardLabel(card);
+  if (card.kind === 'credit') {
+    const creditMinor = await addCredit(
+      userId,
+      card.valueMinor,
+      'giftcard',
+      card.reference,
+      `Gift card · ${label}`,
+    );
+    return { card, creditMinor, plusUntil: null };
+  }
+  const profile = (await MatchProfile.findOne({ user: userId }))!;
+  const until = extendedPlus(profile.plusUntil, Date.now(), card.plusDays);
+  const updated = await MatchProfile.findOneAndUpdate(
+    { _id: profile._id },
+    { plusUntil: until },
+    { new: true },
+  );
+  await record(userId, 'giftcard', 0, updated!.creditMinor, card.reference, `Gift card · ${label}`);
+  return { card, creditMinor: updated!.creditMinor, plusUntil: until };
 }

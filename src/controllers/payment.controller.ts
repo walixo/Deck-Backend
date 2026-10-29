@@ -3,7 +3,7 @@ import { AdCampaign, type IAdCampaign } from '../models/AdCampaign';
 import { Contribution, type IContribution } from '../models/Contribution';
 import { Game } from '../models/Game';
 import { GamePurchase, type IGamePurchase } from '../models/GamePurchase';
-import { MatchTopup } from '../models/MatchMoney';
+import { MatchGiftCard, MatchTopup } from '../models/MatchMoney';
 import { Item } from '../models/Item';
 import { MerchProduct } from '../models/MerchProduct';
 import { Order, type IOrder } from '../models/Order';
@@ -16,7 +16,7 @@ import {
   type VerifiedPayment,
 } from '../services/bachs';
 import { handleConnectEvent } from '../services/payouts';
-import { applyVerifiedTopup } from '../services/matchWallet';
+import { applyVerifiedGiftCard, applyVerifiedTopup } from '../services/matchWallet';
 import { nextOpening } from '../services/adInventory';
 import { evaluateBadges } from '../services/badges';
 import { formatMinor, notify } from '../services/notify';
@@ -489,6 +489,13 @@ async function settle(
   const topup = await MatchTopup.findOne(ref ? { reference: ref } : { checkoutId });
   if (topup) {
     await applyVerifiedTopup(topup, verified);
+    return;
+  }
+
+  /* Match gift cards, bought the same way. */
+  const giftCard = await MatchGiftCard.findOne(ref ? { reference: ref } : { checkoutId });
+  if (giftCard) {
+    await applyVerifiedGiftCard(giftCard, verified);
     return;
   }
 

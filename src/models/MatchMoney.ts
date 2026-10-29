@@ -65,6 +65,7 @@ export const MATCH_LEDGER_KINDS = [
   'badge',
   'plus',
   'refund',
+  'giftcard',
 ] as const;
 export type MatchLedgerKind = (typeof MATCH_LEDGER_KINDS)[number];
 
@@ -249,3 +250,90 @@ verificationSchema.index({ status: 1, submittedAt: 1 });
 export const MatchVerification: Model<IMatchVerification> =
   mongoose.models.MatchVerification ??
   mongoose.model<IMatchVerification>('MatchVerification', verificationSchema);
+
+/* ---------------------------------------------------------- gift cards --- */
+
+export const MATCH_GIFT_CARD_STATUSES = [
+  'pending',
+  'active',
+  'redeemed',
+  'failed',
+  'void',
+] as const;
+export type MatchGiftCardStatus = (typeof MATCH_GIFT_CARD_STATUSES)[number];
+export type MatchGiftCardKind = 'credit' | 'plus';
+
+/**
+ * A Match gift card: credit or Match+ days, bought for someone else (or
+ * handed out by Deck for a sponsor) and claimed with a one-time code.
+ *
+ * Paid ones go through Bachs exactly like a top-up: `pending` until the money
+ * is confirmed, then `active` and redeemable until `expiresAt`. Redeeming
+ * flips `active` to `redeemed` in one guarded update, so a code shared twice
+ * still pays out once. The code is a bearer secret, so it is never selected
+ * unless asked for: only its buyer and staff ever see it.
+ */
+export interface IMatchGiftCard extends Document {
+  _id: mongoose.Types.ObjectId;
+  reference: string;
+  code: string;
+  product: string;
+  kind: MatchGiftCardKind;
+  /** Credit it adds, kobo; 0 for a Match+ card. */
+  valueMinor: number;
+  /** Match+ days it adds; 0 for a credit card. */
+  plusDays: number;
+  /** What was paid for it, kobo; 0 for cards Deck issued. */
+  priceMinor: number;
+  currency: string;
+  status: MatchGiftCardStatus;
+  /** `issued` for cards staff created; `test` where Bachs is not configured. */
+  mode: 'live' | 'test' | 'issued';
+  buyer: mongoose.Types.ObjectId | null;
+  toName: string;
+  fromName: string;
+  message: string;
+  /** Staff's note for an issued batch: the sponsor, the giveaway. */
+  batch: string;
+  checkoutId?: string;
+  checkoutUrl?: string;
+  chargeId?: string;
+  paidAt: Date | null;
+  expiresAt: Date | null;
+  redeemedBy: mongoose.Types.ObjectId | null;
+  redeemedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const giftCardSchema = new Schema<IMatchGiftCard>(
+  {
+    reference: { type: String, required: true, unique: true },
+    code: { type: String, required: true, unique: true, select: false },
+    product: { type: String, required: true },
+    kind: { type: String, enum: ['credit', 'plus'], required: true },
+    valueMinor: { type: Number, default: 0, min: 0 },
+    plusDays: { type: Number, default: 0, min: 0 },
+    priceMinor: { type: Number, default: 0, min: 0 },
+    currency: { type: String, required: true },
+    status: { type: String, enum: MATCH_GIFT_CARD_STATUSES, default: 'pending' },
+    mode: { type: String, enum: ['live', 'test', 'issued'], required: true },
+    buyer: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    toName: { type: String, default: '', maxlength: 40 },
+    fromName: { type: String, default: '', maxlength: 40 },
+    message: { type: String, default: '', maxlength: 140 },
+    batch: { type: String, default: '', maxlength: 80 },
+    checkoutId: { type: String, index: true, sparse: true },
+    checkoutUrl: { type: String },
+    chargeId: { type: String },
+    paidAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
+    redeemedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    redeemedAt: { type: Date, default: null },
+  },
+  { timestamps: true },
+);
+giftCardSchema.index({ status: 1, createdAt: -1 });
+
+export const MatchGiftCard: Model<IMatchGiftCard> =
+  mongoose.models.MatchGiftCard ?? mongoose.model<IMatchGiftCard>('MatchGiftCard', giftCardSchema);

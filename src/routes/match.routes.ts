@@ -1,3 +1,9 @@
+import {
+  buyGiftCard,
+  listGiftCards,
+  redeemGiftCard,
+  verifyGiftCard,
+} from '../controllers/matchGiftCards.controller';
 import { Router } from 'express';
 import {
   connected,
@@ -34,7 +40,9 @@ import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import {
   createMatchProfileSchema,
+  matchGiftCardSchema,
   matchGiftSchema,
+  matchRedeemSchema,
   matchPushSchema,
   matchReportSchema,
   matchSectionRequestSchema,
@@ -120,6 +128,30 @@ router.post(
   moneyLimiter,
   validate(matchVerificationSchema),
   asyncHandler(submitVerification),
+);
+
+/* Gift cards. Redeeming is held to a few tries, so codes can't be guessed. */
+const redeemLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 10,
+  message: 'Too many tries — wait a few minutes and check the code',
+  key: (req) => (req.user ? `user:${String(req.user._id)}` : undefined),
+});
+router.get('/giftcards', auth, asyncHandler(listGiftCards));
+router.post(
+  '/giftcards',
+  auth,
+  moneyLimiter,
+  validate(matchGiftCardSchema),
+  asyncHandler(buyGiftCard),
+);
+router.post('/giftcards/:reference/verify', auth, asyncHandler(verifyGiftCard));
+router.post(
+  '/giftcards/redeem',
+  auth,
+  redeemLimiter,
+  validate(matchRedeemSchema),
+  asyncHandler(redeemGiftCard),
 );
 
 export default router;

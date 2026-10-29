@@ -83,6 +83,32 @@ export const matchTopupSchema = z.object({ amountMinor: z.number().int().positiv
 
 export const matchGiftSchema = z.object({ gift: z.enum(MATCH_GIFTS) }).strict();
 
+const giftCardProducts = ['credit-1000', 'credit-2000', 'credit-5000', 'plus-30'] as const;
+const shortText = (max: number) => z.string().trim().max(max).optional().default('');
+
+/** Buying a gift card: what it holds, and an optional note for the card. */
+export const matchGiftCardSchema = z
+  .object({
+    product: z.enum(giftCardProducts),
+    toName: shortText(40),
+    fromName: shortText(40),
+    message: shortText(140),
+  })
+  .strict();
+
+export const matchRedeemSchema = z
+  .object({ code: z.string().trim().min(4, 'Enter the gift card code').max(32) })
+  .strict();
+
+/** Staff issuing free cards for a sponsor or a giveaway. */
+export const matchGiftCardIssueSchema = z
+  .object({
+    product: z.enum(giftCardProducts),
+    count: z.number().int().min(1).max(500),
+    batch: z.string().trim().min(1, 'Say what these are for').max(80),
+  })
+  .strict();
+
 /** A selfie as a data URL; the screen shrinks it to a few hundred kilobytes. */
 export const matchVerificationSchema = z
   .object({ photo: z.string().max(900_000, 'That photo is too large') })
@@ -137,6 +163,9 @@ export type MatchSectionInput = z.infer<typeof matchSectionSchema>;
 export type MatchPauseInput = z.infer<typeof matchPauseSchema>;
 export type MatchTopupInput = z.infer<typeof matchTopupSchema>;
 export type MatchGiftInput = z.infer<typeof matchGiftSchema>;
+export type MatchGiftCardInput = z.infer<typeof matchGiftCardSchema>;
+export type MatchRedeemInput = z.infer<typeof matchRedeemSchema>;
+export type MatchGiftCardIssueInput = z.infer<typeof matchGiftCardIssueSchema>;
 export type MatchVerificationInput = z.infer<typeof matchVerificationSchema>;
 export type MatchNightInput = z.infer<typeof matchNightSchema>;
 export type MatchVerificationDecisionInput = z.infer<typeof matchVerificationDecisionSchema>;
