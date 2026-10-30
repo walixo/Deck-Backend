@@ -145,6 +145,19 @@ export const listItemsSchema = z.object({
    * the list is the whole catalogue, imported listings included.
    */
   source: z.enum(['deck', 'imported']).optional(),
+  /*
+   * Specific launches by slug, comma-separated, at most six — for curated
+   * spots like the landing page's hero. The list endpoint rather than six
+   * detail fetches, because a detail fetch counts as a view and a homepage
+   * load is not somebody opening the launch.
+   */
+  slugs: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9-]+(,[a-z0-9-]+){0,5}$/, 'Slugs are comma-separated, at most six')
+    .transform((value) => value.split(','))
+    .optional(),
   /* ISO 3166-1 alpha-2, for the African catalogue's country filter. */
   country: z
     .string()

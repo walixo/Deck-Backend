@@ -51,6 +51,7 @@ function buildFilter(query: ListItemsQuery): FilterQuery<IItem> {
   if (query.source === 'deck') Object.assign(filter, COMPETING);
   if (query.source === 'imported') filter.source = 'imported';
   if (query.country) filter.country = query.country;
+  if (query.slugs) filter.slug = { $in: query.slugs };
 
   /*
    * Date scoping, as a prefix match on the denormalised day key.
