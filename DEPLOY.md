@@ -336,6 +336,18 @@ launch or queued row already uses; bad rows are reported by line number and
 skipped. Then review and publish them one by one in the admin area. Requests
 from founders ("this is mine", "take it down") arrive in the same place.
 
+Logos come from each product's own site, stored in Cloudinary rather than
+linked, so a page view never calls out to the company:
+
+```bash
+npm run fetch-logos -- --dry-run     # which listings would get which icon
+npm run fetch-logos                  # store and attach (queued and published listings)
+```
+
+It needs the Cloudinary variables set and refuses to run without them. The few
+sites that only publish a tiny favicon are listed at the end; upload those by
+hand in Admin → Imports → Edit, or on the published listing's page.
+
 ## 4. Bachs (payments and payouts)
 
 Every charge — merch, fundraise contributions, ad slots — goes through a Bachs

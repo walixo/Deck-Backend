@@ -125,6 +125,47 @@ export async function putImage(bytes: Buffer, ext: string): Promise<StoredImage>
 }
 
 /**
+ * Stores an SVG as a PNG, rasterised by Cloudinary on the way in.
+ *
+ * SVG is refused everywhere else in Deck because it can carry script, and an
+ * SVG served back would run it. This never serves one: the `format` and
+ * `transformation` here are applied before anything is saved, so what
+ * Cloudinary keeps — and all it can ever hand out — is a flat PNG, padded onto
+ * a transparent square. Used only by `fetch-logos`, for companies whose sole
+ * published icon is vector.
+ *
+ * Cloudinary only. There is no local rasteriser, and adding an image library
+ * to convert one kind of logo is not worth the dependency.
+ */
+export async function putSvgAsPng(svg: Buffer, size = 512): Promise<StoredImage> {
+  const service = client();
+  if (!service) throw new Error('Converting an SVG needs Cloudinary configured');
+
+  return new Promise<StoredImage>((resolve, reject) => {
+    const stream = service.uploader.upload_stream(
+      {
+        folder: FOLDER,
+        public_id: crypto.randomUUID(),
+        resource_type: 'image',
+        format: 'png',
+        transformation: [{ width: size, height: size, crop: 'pad', background: 'transparent' }],
+        overwrite: false,
+        invalidate: false,
+      },
+      (error, result) => {
+        if (error || !result) {
+          reject(error instanceof Error ? error : new Error('Cloudinary upload failed'));
+          return;
+        }
+        resolve({ url: result.secure_url, id: result.public_id });
+      },
+    );
+
+    stream.end(svg);
+  });
+}
+
+/**
  * Removes a stored image, quietly.
  *
  * Only ever called to clean up after a failure part-way through a batch, where
