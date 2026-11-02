@@ -1,3 +1,5 @@
+import { updateSite } from '../controllers/site.controller';
+import { siteSettingsSchema } from '../validators/site.validators';
 import {
   issueMatchGiftCards,
   listMatchGiftCards,
@@ -34,6 +36,7 @@ import {
   listMatchNights,
   listMatchVerifications,
   matchReports,
+  matchQuality,
   matchRevenue,
   matchSectionRequests,
   matchStats,
@@ -185,6 +188,8 @@ router.patch(
   asyncHandler(setMatchSection),
 );
 router.delete('/match/people/:userId/section-request', asyncHandler(declineMatchSection));
+router.put('/site', validate(siteSettingsSchema), asyncHandler(updateSite));
+router.get('/match/quality', asyncHandler(matchQuality));
 router.get('/match/revenue', asyncHandler(matchRevenue));
 router.get('/match/nights', asyncHandler(listMatchNights));
 router.put('/match/nights', validate(matchNightSchema), asyncHandler(saveMatchNight));

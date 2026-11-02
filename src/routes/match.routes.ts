@@ -6,6 +6,7 @@ import {
 } from '../controllers/matchGiftCards.controller';
 import { Router } from 'express';
 import {
+  callQuality,
   connected,
   iceServers,
   createMe,
@@ -43,6 +44,7 @@ import {
   createMatchProfileSchema,
   matchGiftCardSchema,
   matchGiftSchema,
+  matchQualitySchema,
   matchRedeemSchema,
   matchPushSchema,
   matchReportSchema,
@@ -106,6 +108,19 @@ router.post(
   moneyLimiter,
   validate(matchGiftSchema),
   asyncHandler(sendGift),
+);
+/* Sent after every call, so counted per account, generously. */
+const qualityLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  max: 120,
+  key: (req) => (req.user ? `user:${String(req.user._id)}` : undefined),
+});
+router.post(
+  '/calls/:callId/quality',
+  auth,
+  qualityLimiter,
+  validate(matchQualitySchema),
+  asyncHandler(callQuality),
 );
 router.post('/calls/:callId/leave', auth, leaveCall);
 router.post('/calls/:callId/share', auth, asyncHandler(share));

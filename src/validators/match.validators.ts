@@ -57,6 +57,24 @@ export const matchReportSchema = z
   })
   .strict();
 
+const share = z.number().min(0).max(100).optional();
+/** One browser's account of how a call sounded, sent as it ends. */
+export const matchQualitySchema = z
+  .object({
+    connected: z.boolean(),
+    route: z.enum(['direct', 'relay', 'none']),
+    lossPct: share,
+    concealedPct: share,
+    jitterMs: z.number().min(0).max(60_000).optional(),
+    rttMs: z.number().min(0).max(60_000).optional(),
+    heardSeconds: z
+      .number()
+      .min(0)
+      .max(24 * 3600)
+      .optional(),
+  })
+  .strict();
+
 export const matchPushSchema = z
   .object({
     endpoint: z
@@ -163,6 +181,7 @@ export type MatchSectionInput = z.infer<typeof matchSectionSchema>;
 export type MatchPauseInput = z.infer<typeof matchPauseSchema>;
 export type MatchTopupInput = z.infer<typeof matchTopupSchema>;
 export type MatchGiftInput = z.infer<typeof matchGiftSchema>;
+export type MatchQualityInput = z.infer<typeof matchQualitySchema>;
 export type MatchGiftCardInput = z.infer<typeof matchGiftCardSchema>;
 export type MatchRedeemInput = z.infer<typeof matchRedeemSchema>;
 export type MatchGiftCardIssueInput = z.infer<typeof matchGiftCardIssueSchema>;

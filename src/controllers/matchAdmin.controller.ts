@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import mongoose from 'mongoose';
-import { MatchCall, MatchReport } from '../models/MatchCall';
+import { MatchCall, MatchReport, type MatchCallQuality } from '../models/MatchCall';
 import {
   MatchEntry,
   MatchGiftCard,
@@ -560,4 +560,104 @@ export async function declineMatchVerification(req: Request, res: Response): Pro
     summary: `Declined ${label}'s Match verification${input.underage ? ' (looks under 18 — removed)' : ''}`,
   });
   res.json({ success: true, data: { status: 'declined' } });
+}
+
+/* ---------------------------------------------------------- call quality --- */
+
+/** A side "sounded rough" past these: lots lost or patched over, on a real call. */
+const ROUGH_PCT = 5;
+const MIN_HEARD_SECONDS = 10;
+
+const roughSide = (side: MatchCallQuality | null) =>
+  Boolean(
+    side?.connected &&
+    (side.heardSeconds ?? 0) >= MIN_HEARD_SECONDS &&
+    ((side.concealedPct ?? 0) >= ROUGH_PCT || (side.lossPct ?? 0) >= ROUGH_PCT),
+  );
+const deviceOf = (side: MatchCallQuality) => `${side.os} · ${side.browser}`;
+
+/**
+ * How calls sounded, from what each browser reported at the end: rough audio
+ * and failed connections, by device, and the recent calls that went wrong.
+ */
+export async function matchQuality(req: Request, res: Response): Promise<void> {
+  const days = Math.min(90, Math.max(1, Number(req.query.days ?? 7) || 7));
+  const since = new Date(Date.now() - days * DAY);
+  const calls = await MatchCall.find({
+    matchedAt: { $gte: since },
+    $or: [{ 'quality.male': { $ne: null } }, { 'quality.female': { $ne: null } }],
+  })
+    .select('callId matchedAt startedAt endReason relayed quality')
+    .sort({ matchedAt: -1 })
+    .lean();
+
+  const devices = new Map<
+    string,
+    { reports: number; failed: number; rough: number; relayed: number }
+  >();
+  let sides = 0;
+  let rough = 0;
+  let failed = 0;
+  let connectedSides = 0;
+  const bad: unknown[] = [];
+  for (const call of calls) {
+    const pair = [call.quality?.male ?? null, call.quality?.female ?? null];
+    for (const side of pair) {
+      if (!side) continue;
+      sides += 1;
+      const row = devices.get(deviceOf(side)) ?? { reports: 0, failed: 0, rough: 0, relayed: 0 };
+      row.reports += 1;
+      if (!side.connected) {
+        row.failed += 1;
+        failed += 1;
+      } else {
+        connectedSides += 1;
+        if (side.route === 'relay') row.relayed += 1;
+        if (roughSide(side)) {
+          row.rough += 1;
+          rough += 1;
+        }
+      }
+      devices.set(deviceOf(side), row);
+    }
+    if (bad.length < 25 && (pair.some(roughSide) || call.endReason === 'no-connection')) {
+      const view = (side: MatchCallQuality | null) =>
+        side && {
+          device: deviceOf(side),
+          connected: side.connected,
+          route: side.route,
+          lossPct: side.lossPct,
+          concealedPct: side.concealedPct,
+          jitterMs: side.jitterMs,
+          rttMs: side.rttMs,
+          rough: roughSide(side),
+        };
+      bad.push({
+        callId: call.callId,
+        matchedAt: call.matchedAt,
+        endReason: call.endReason,
+        man: view(pair[0]),
+        woman: view(pair[1]),
+      });
+    }
+  }
+  res.json({
+    success: true,
+    data: {
+      days,
+      reports: sides,
+      roughRate: ratio(rough, connectedSides),
+      failRate: ratio(failed, sides),
+      devices: [...devices.entries()]
+        .map(([device, row]) => ({
+          device,
+          ...row,
+          roughRate: ratio(row.rough, row.reports - row.failed),
+          failRate: ratio(row.failed, row.reports),
+        }))
+        .sort((a, b) => b.reports - a.reports)
+        .slice(0, 30),
+      calls: bad,
+    },
+  });
 }

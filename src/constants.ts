@@ -351,6 +351,7 @@ export const AUDIT_ACTIONS = [
   'match.verification.declined',
   'match.giftcards.issued',
   'match.giftcard.voided',
+  'site.settings.changed',
   'ad.approved',
   'ad.rejected',
   'ad.pulled',
@@ -381,6 +382,7 @@ export const AUDIT_TARGETS = [
   'match_gift_card',
   'import',
   'listing_request',
+  'site',
 ] as const;
 export type AuditTarget = (typeof AUDIT_TARGETS)[number];
 

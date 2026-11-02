@@ -1,3 +1,4 @@
+import { getSite } from '../controllers/site.controller';
 import { Router } from 'express';
 import { getExchangeRates, getStats, getTags } from '../controllers/meta.controller';
 import { listCategories } from '../controllers/category.controller';
@@ -41,6 +42,8 @@ router.get('/tags', asyncHandler(getTags));
 router.get('/stats', asyncHandler(getStats));
 router.get('/rates', asyncHandler(getExchangeRates));
 
+/* What the site shows — launches on or off, which landing page. */
+router.get('/site', asyncHandler(getSite));
 router.use('/auth', authRoutes);
 router.use('/match', matchRoutes);
 router.use('/admin', adminRoutes);

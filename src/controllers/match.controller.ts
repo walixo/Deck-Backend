@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { MatchCall, MatchReport } from '../models/MatchCall';
 import { MatchProfile, MatchPush, type IMatchProfile } from '../models/MatchProfile';
 import { MatchEntry, MatchGift } from '../models/MatchMoney';
+import { describeDevice } from '../services/device';
 import * as hub from '../services/matchHub';
 import { hoursAt, matchDay } from '../services/matchHours';
 import { tonight } from '../services/matchNights';
@@ -18,6 +19,7 @@ import { ApiError } from '../utils/ApiError';
 import type {
   CreateMatchProfileInput,
   MatchPushInput,
+  MatchQualityInput,
   MatchReportInput,
   MatchSectionRequestInput,
   MatchSignalInput,
@@ -195,6 +197,38 @@ export function signal(req: Request, res: Response): void {
   }
   hub.relay(String(req.user!._id), String(req.params.callId), input.data);
   res.json({ success: true, data: { sent: true } });
+}
+
+/**
+ * A browser's report on how a call sounded, sent as it ends. Only the two
+ * people in the call can report, once each; the device is read from the
+ * request, not trusted from the body.
+ */
+export async function callQuality(req: Request, res: Response): Promise<void> {
+  const input = req.body as MatchQualityInput;
+  const userId = req.user!._id;
+  const call = await MatchCall.findOne({ callId: String(req.params.callId) }).select('male female');
+  if (!call) throw ApiError.notFound('No such call');
+  const side = call.male.equals(userId) ? 'male' : call.female.equals(userId) ? 'female' : null;
+  if (!side) throw ApiError.forbidden('Not your call');
+  const device = describeDevice(req.headers['user-agent']);
+  await MatchCall.updateOne(
+    { _id: call._id, [`quality.${side}`]: null },
+    {
+      [`quality.${side}`]: {
+        connected: input.connected,
+        route: input.route,
+        lossPct: input.lossPct ?? null,
+        concealedPct: input.concealedPct ?? null,
+        jitterMs: input.jitterMs ?? null,
+        rttMs: input.rttMs ?? null,
+        heardSeconds: input.heardSeconds ?? null,
+        ...device,
+        at: new Date(),
+      },
+    },
+  );
+  res.json({ success: true, data: { recorded: true } });
 }
 
 /** The STUN and TURN servers this person's browser should call with. */

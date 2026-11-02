@@ -33,12 +33,48 @@ export interface IMatchCall extends Document {
   extensions: number;
   /** The audio went through the TURN relay because a direct route failed. */
   relayed: boolean;
+  /** How the call sounded from each side, as each browser reported it at the end. */
+  quality: { male: MatchCallQuality | null; female: MatchCallQuality | null };
   /** Who pressed share. Usernames are revealed only when both did. */
   sharedBy: mongoose.Types.ObjectId[];
   revealedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * One side's report: which way the audio went, how much was lost or patched
+ * over (concealed — garbled audio shows up here), jitter and round trip, and
+ * the device in broad strokes. No audio, no content.
+ */
+export interface MatchCallQuality {
+  connected: boolean;
+  route: 'direct' | 'relay' | 'none';
+  lossPct: number | null;
+  concealedPct: number | null;
+  jitterMs: number | null;
+  rttMs: number | null;
+  heardSeconds: number | null;
+  os: string;
+  browser: string;
+  at: Date;
+}
+
+const qualitySchema = new Schema<MatchCallQuality>(
+  {
+    connected: { type: Boolean, required: true },
+    route: { type: String, enum: ['direct', 'relay', 'none'], required: true },
+    lossPct: { type: Number, default: null },
+    concealedPct: { type: Number, default: null },
+    jitterMs: { type: Number, default: null },
+    rttMs: { type: Number, default: null },
+    heardSeconds: { type: Number, default: null },
+    os: { type: String, default: '' },
+    browser: { type: String, default: '' },
+    at: { type: Date, required: true },
+  },
+  { _id: false },
+);
 
 const callSchema = new Schema<IMatchCall>(
   {
@@ -55,6 +91,10 @@ const callSchema = new Schema<IMatchCall>(
     extended: { type: Boolean, default: false },
     extensions: { type: Number, default: 0 },
     relayed: { type: Boolean, default: false },
+    quality: {
+      male: { type: qualitySchema, default: null },
+      female: { type: qualitySchema, default: null },
+    },
     sharedBy: { type: [Schema.Types.ObjectId], default: [] },
     revealedAt: { type: Date, default: null },
   },
