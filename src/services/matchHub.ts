@@ -2,10 +2,18 @@ import { randomBytes } from 'node:crypto';
 import type { Response } from 'express';
 import { env } from '../config/env';
 import { MatchCall, type MatchEndReason } from '../models/MatchCall';
-import { MatchDay, type MatchGender, type MatchHandles } from '../models/MatchProfile';
+import {
+  MatchDay,
+  MatchProfile,
+  type IMatchProfile,
+  type MatchBilling,
+  type MatchGender,
+  type MatchHandles,
+} from '../models/MatchProfile';
 import { ApiError } from '../utils/ApiError';
 import { hoursAt, lateAt, matchDay } from './matchHours';
 import { tonight } from './matchNights';
+import { isPlus, MATCH_PRICES, NotEnoughCredit, refund, spend } from './matchWallet';
 import { pushPublicKey } from './vapid';
 
 /**
@@ -42,6 +50,8 @@ interface Person {
   plus: boolean;
   /** Has the Verified badge, which the person they talk to sees. */
   verified: boolean;
+  /** The country they chose, or empty. Matching prefers the same one. */
+  country: string;
   blocked: Set<string>;
   lines: Set<Response>;
   state: MatchState;
@@ -65,13 +75,31 @@ interface Call {
   shareUntil: number;
   shares: Map<string, MatchHandles>;
   revealed: boolean;
-  /** Who pressed +1 minute this round. Both pressing adds a minute. */
-  extendVotes: Set<string>;
-  /** Minutes added so far. The first is free; later ones are paid for. */
-  extensions: number;
-  /** Both pressed and the server is charging for it; no new votes meanwhile. */
-  settling: boolean;
+  /** The one free extra minute: added by either person's tap. */
+  freeAdded: boolean;
+  /** Whoever pressed "Keep talking", and what they have paid for. */
+  payers: Map<string, Payer>;
   timer: NodeJS.Timeout | null;
+}
+
+/**
+ * Someone paying to keep a call going once its free time is up. Time is
+ * bought ahead in small blocks — ten seconds at a time per-second, a minute
+ * at a time per-minute — and the next block is bought just before the last
+ * runs out, so the call never stops while their credit lasts.
+ */
+interface Payer {
+  mode: MatchBilling;
+  /** Match+: the time is free. */
+  plus: boolean;
+  /** Bought time runs to here. Never before the free time ends. */
+  paidUntil: number;
+  spentMinor: number;
+  /** Stopped paying, or ran out: no more blocks are bought. */
+  stopped: boolean;
+  /* What the last block cost and when it started, for a per-second refund. */
+  block: { from: number; ms: number; minor: number } | null;
+  renew: NodeJS.Timeout | null;
 }
 
 const CALL_MS = env.matchCallSeconds * 1000;
@@ -85,7 +113,12 @@ const REMATCH_MS = 10 * 60 * 1000;
 /** Two people can talk this many times in all; after that they are not matched again. */
 export const MAX_CALLS_TOGETHER = 5;
 const HEARTBEAT_MS = 15_000;
-const EXTRA_MS = 60_000;
+/** The free extra minute: as long as the first, so tests can shorten both. */
+const EXTRA_MS = CALL_MS;
+/** Paid time is bought this far ahead, per billing mode. */
+const BLOCK_MS: Record<MatchBilling, number> = { second: 10_000, minute: 60_000 };
+/** The next block is bought this long before the current one runs out. */
+const RENEW_EARLY_MS = 2_500;
 
 const people = new Map<string, Person>();
 const queues: Record<MatchGender, string[]> = { male: [], female: [] };
@@ -205,7 +238,7 @@ function snapshot(person: Person) {
             caller: call.caller === person.userId,
             startedAt: call.startedAt,
             endsAt: call.endsAt,
-            extensions: call.extensions,
+            time: timeView(call, person.userId),
             them: { verified: Boolean(people.get(partnerOf(call, person.userId))?.verified) },
           }
         : null,
@@ -220,8 +253,19 @@ export interface Presence {
   gender: MatchGender;
   plus: boolean;
   verified: boolean;
+  country: string;
   blocked: string[];
 }
+
+/** What the hub needs to know about someone, from their profile. */
+export const presenceOf = (profile: IMatchProfile): Presence => ({
+  userId: String(profile.user),
+  gender: profile.gender,
+  plus: isPlus(profile),
+  verified: Boolean(profile.verifiedAt),
+  country: profile.country ?? '',
+  blocked: profile.blocked.map(String),
+});
 
 /** Opens one person's stream. It stays open until they go away. */
 export function attach(presence: Presence, res: Response): void {
@@ -242,6 +286,7 @@ export function attach(presence: Presence, res: Response): void {
       gender: presence.gender,
       plus: presence.plus,
       verified: presence.verified,
+      country: presence.country,
       blocked: new Set(presence.blocked),
       lines: new Set(),
       state: 'idle',
@@ -277,6 +322,7 @@ export function update(presence: Presence): void {
   if (!person) return;
   person.plus = presence.plus;
   person.verified = presence.verified;
+  person.country = presence.country;
   person.blocked = new Set(presence.blocked);
 }
 
@@ -370,15 +416,22 @@ function canMeet(man: Person, woman: Person): boolean {
   return !last || Date.now() - last > REMATCH_MS;
 }
 
-/** Pairs everyone it can, oldest waiting first on both sides. */
+/**
+ * Pairs everyone it can, oldest waiting first on both sides — someone in the
+ * same country first, when one is waiting, and otherwise whoever is.
+ */
 function pairUp(): void {
   for (const manId of [...queues.male]) {
     const man = people.get(manId);
     if (!man || man.state !== 'waiting') continue;
-    const womanId = queues.female.find((id) => {
+    const open = queues.female.filter((id) => {
       const woman = people.get(id);
       return woman?.state === 'waiting' && canMeet(man, woman);
     });
+    const near = man.country
+      ? open.find((id) => people.get(id)?.country === man.country)
+      : undefined;
+    const womanId = near ?? open[0];
     if (womanId) begin(man, people.get(womanId)!);
   }
 }
@@ -400,9 +453,8 @@ function begin(man: Person, woman: Person): void {
     shareUntil: 0,
     shares: new Map(),
     revealed: false,
-    extendVotes: new Set(),
-    extensions: 0,
-    settling: false,
+    freeAdded: false,
+    payers: new Map(),
     timer: null,
   };
   calls.set(call.id, call);
@@ -466,6 +518,12 @@ export function connected(userId: string, callId: string): void {
   talked.set(pair, (talked.get(pair) ?? 0) + 1);
   call.endsAt = call.startedAt + CALL_MS;
   call.timer = setTimeout(() => end(call, 'time'), CALL_MS);
+  /* Anyone who pressed Keep talking while connecting starts counting now. */
+  for (const [id, payer] of call.payers) {
+    payer.paidUntil = Math.max(payer.paidUntil, freeEnd(call));
+    scheduleRenewal(call, id);
+  }
+  retime(call);
   for (const id of [call.male, call.female]) {
     tell(id, 'started', {
       callId,
@@ -482,6 +540,7 @@ export function connected(userId: string, callId: string): void {
 function end(call: Call, reason: MatchEndReason, by?: string): void {
   if (call.state === 'ended') return;
   if (call.timer) clearTimeout(call.timer);
+  settlePayers(call, Date.now());
   call.state = 'ended';
   call.endReason = reason;
   call.shareUntil = reason === 'time' ? Date.now() + SHARE_MS : 0;
@@ -509,77 +568,207 @@ function end(call: Call, reason: MatchEndReason, by?: string): void {
   announceOnline();
 }
 
+/* ------------------------------------------------------------- time --- */
+
+/** When the free time ends: one minute, plus the free extra one if added. */
+const freeEnd = (call: Call) =>
+  (call.startedAt ?? Date.now()) + CALL_MS + (call.freeAdded ? EXTRA_MS : 0);
+
+/** One side's view of the clock: free or paid, and who is paying. */
+function timeView(call: Call, userId: string) {
+  const mine = call.payers.get(userId);
+  const theirs = call.payers.get(partnerOf(call, userId));
+  return {
+    freeAdded: call.freeAdded,
+    freeEndsAt: call.startedAt ? freeEnd(call) : null,
+    paying: {
+      you: Boolean(mine && !mine.stopped),
+      them: Boolean(theirs && !theirs.stopped),
+    },
+    mode: mine?.mode ?? null,
+    spentMinor: mine?.spentMinor ?? 0,
+  };
+}
+
 /**
- * Presses +1 minute. Each side hears who has pressed, so the other can say
- * yes too. When both have, the round is `agreed`: the caller charges for it
- * (the first minute is free) and then grants or refuses it. Nobody can vote
- * again while that is being settled.
+ * Moves the end of the call to the later of the free time and whatever has
+ * been paid for, and tells both sides. `note` says what just happened, for
+ * the person it happened to and the other one.
  */
-export function voteMinute(
-  userId: string,
-  callId: string,
-): { agreed: false } | { agreed: true; round: number; male: string; female: string } {
-  const call = inCall(userId, callId);
-  if (call.state !== 'live') throw ApiError.conflict('No more time to add');
-  if (call.settling) throw ApiError.conflict('Adding a minute…');
-  call.extendVotes.add(userId);
-  for (const id of [call.male, call.female]) {
-    tell(id, 'extend', {
-      callId,
-      mine: call.extendVotes.has(id),
-      theirs: call.extendVotes.has(partnerOf(call, id)),
-      round: call.extensions,
-    });
+function retime(call: Call, note?: { kind: string; by: string }): void {
+  if (call.state !== 'live' || !call.startedAt) {
+    for (const id of [call.male, call.female]) {
+      tell(id, 'time', {
+        callId: call.id,
+        endsAt: call.endsAt,
+        time: timeView(call, id),
+        serverNow: Date.now(),
+      });
+    }
+    return;
   }
-  if (call.extendVotes.size < 2) return { agreed: false };
-  call.settling = true;
-  return { agreed: true, round: call.extensions, male: call.male, female: call.female };
-}
-
-/** Minutes added to this call so far: the next one is free only if none were. */
-export function minutesAdded(userId: string, callId: string): number {
-  return inCall(userId, callId).extensions;
-}
-
-/** Adds the agreed minute. False if the call ended while it was paid for. */
-export function grantMinute(callId: string): boolean {
-  const call = calls.get(callId);
-  if (!call) return false;
-  call.settling = false;
-  call.extendVotes.clear();
-  if (call.state !== 'live') return false;
-  call.extensions += 1;
-  call.endsAt = (call.endsAt ?? Date.now()) + EXTRA_MS;
+  const paid = Math.max(0, ...[...call.payers.values()].map((payer) => payer.paidUntil));
+  call.endsAt = Math.max(freeEnd(call), paid);
   if (call.timer) clearTimeout(call.timer);
-  call.timer = setTimeout(() => end(call, 'time'), call.endsAt - Date.now());
+  call.timer = setTimeout(() => end(call, 'time'), Math.max(0, call.endsAt - Date.now()));
   for (const id of [call.male, call.female]) {
-    tell(id, 'extended', {
-      callId,
+    tell(id, 'time', {
+      callId: call.id,
       endsAt: call.endsAt,
+      time: timeView(call, id),
+      note: note ? { kind: note.kind, by: note.by === id ? 'you' : 'them' } : null,
       serverNow: Date.now(),
-      extensions: call.extensions,
     });
   }
-  void MatchCall.updateOne({ callId }, { extended: true, extensions: call.extensions }).catch(
-    () => undefined,
-  );
+}
+
+/**
+ * The one free extra minute, for both, on either person's tap. A second tap,
+ * from either side, has nothing more to give: after it, time is paid for.
+ */
+export function addFreeMinute(userId: string, callId: string): void {
+  const call = inCall(userId, callId);
+  if (call.state === 'ended') throw ApiError.conflict('The call has ended');
+  if (call.freeAdded)
+    throw ApiError.conflict('The free minute is already added — keep talking to go on');
+  call.freeAdded = true;
+  /* Anyone already paying starts after the new free minute instead. */
+  for (const payer of call.payers.values()) payer.paidUntil += EXTRA_MS;
+  retime(call, { kind: 'free', by: userId });
+  void MatchCall.updateOne({ callId }, { extended: true, extensions: 1 }).catch(() => undefined);
+}
+
+const blockPrice = (payer: Pick<Payer, 'mode' | 'plus'>) =>
+  payer.plus
+    ? 0
+    : payer.mode === 'second'
+      ? (BLOCK_MS.second / 1000) * MATCH_PRICES.second
+      : MATCH_PRICES.minute;
+
+/**
+ * Buys the next block of time for one payer. False if they couldn't pay;
+ * they then stop, and the call runs on only as long as someone else pays.
+ */
+async function buyBlock(call: Call, userId: string): Promise<boolean> {
+  const payer = call.payers.get(userId);
+  if (!payer || payer.stopped || call.state === 'ended') return false;
+  const ms = BLOCK_MS[payer.plus ? 'minute' : payer.mode];
+  const minor = blockPrice(payer);
+  try {
+    await spend(
+      userId,
+      minor,
+      'minute',
+      call.id,
+      payer.plus
+        ? 'Extra time · Match+'
+        : `Extra time · ${payer.mode === 'second' ? 'per second' : 'per minute'}`,
+    );
+  } catch {
+    payer.stopped = true;
+    return false;
+  }
+  /* The call may have ended while the charge went through. */
+  if ((call.state as Call['state']) === 'ended') {
+    if (minor > 0) await refund(userId, minor, call.id, 'Call ended first');
+    return false;
+  }
+  const from = Math.max(payer.paidUntil, freeEnd(call), Date.now());
+  payer.paidUntil = from + ms;
+  payer.spentMinor += minor;
+  payer.block = { from, ms, minor };
   return true;
 }
 
-/** The agreed minute could not be paid for: the votes reset, with a reason. */
-export function refuseMinute(callId: string, short: string): void {
-  const call = calls.get(callId);
-  if (!call) return;
-  call.settling = false;
-  call.extendVotes.clear();
-  for (const id of [call.male, call.female]) {
-    tell(id, 'extend', {
-      callId,
-      mine: false,
-      theirs: false,
-      round: call.extensions,
-      refused: id === short ? 'you' : 'them',
-    });
+function scheduleRenewal(call: Call, userId: string): void {
+  const payer = call.payers.get(userId);
+  if (!payer || payer.stopped || call.state !== 'live') return;
+  if (payer.renew) clearTimeout(payer.renew);
+  payer.renew = setTimeout(
+    () => {
+      void buyBlock(call, userId).then((ok) => {
+        if (ok) scheduleRenewal(call, userId);
+        retime(call, ok ? undefined : { kind: 'out-of-credit', by: userId });
+      });
+    },
+    Math.max(0, payer.paidUntil - Date.now() - RENEW_EARLY_MS),
+  );
+}
+
+/**
+ * "Keep talking": this person pays to carry the call on past its free time,
+ * for both of them. Their first block is bought now, so a tap with no credit
+ * is refused straight away instead of when the free time runs out.
+ */
+export async function keepTalking(
+  userId: string,
+  callId: string,
+  mode: MatchBilling,
+  plus: boolean,
+): Promise<void> {
+  const call = inCall(userId, callId);
+  if (call.state === 'ended') throw ApiError.conflict('The call has ended');
+  const existing = call.payers.get(userId);
+  if (existing && !existing.stopped) return;
+  const payer: Payer = existing ?? {
+    mode,
+    plus,
+    paidUntil: 0,
+    spentMinor: 0,
+    stopped: false,
+    block: null,
+    renew: null,
+  };
+  payer.stopped = false;
+  call.payers.set(userId, payer);
+  const minor = blockPrice(payer);
+  try {
+    if (!(await buyBlock(call, userId))) throw new Error('declined');
+  } catch {
+    payer.stopped = true;
+    retime(call);
+    const profile = await MatchProfile.findOne({ user: userId }).select('creditMinor');
+    throw new NotEnoughCredit(minor, profile?.creditMinor ?? 0, userId);
+  }
+  if (call.state === 'live') scheduleRenewal(call, userId);
+  retime(call, { kind: 'paying', by: userId });
+}
+
+/** Stops paying. Per second, the unused seconds come back; a minute is kept. */
+export async function stopPaying(userId: string, callId: string): Promise<void> {
+  const call = inCall(userId, callId);
+  const payer = call.payers.get(userId);
+  if (!payer || payer.stopped) return;
+  payer.stopped = true;
+  if (payer.renew) clearTimeout(payer.renew);
+  const back = unusedMinor(payer, call, Date.now());
+  if (back > 0) {
+    payer.spentMinor -= back;
+    payer.paidUntil = Math.max(Date.now(), freeEnd(call));
+    await refund(userId, back, call.id, 'Extra time not used');
+  }
+  retime(call, { kind: 'stopped', by: userId });
+}
+
+/** What a per-second payer bought but won't use, from `at`: whole seconds only. */
+function unusedMinor(payer: Payer, call: Call, at: number): number {
+  if (payer.plus || payer.mode !== 'second' || !payer.block) return 0;
+  const usedFrom = Math.max(at, freeEnd(call));
+  const unusedMs = Math.max(0, payer.paidUntil - usedFrom);
+  const seconds = Math.floor(Math.min(unusedMs, payer.block.ms) / 1000);
+  return Math.min(payer.block.minor, seconds * MATCH_PRICES.second);
+}
+
+/** At the end: stop every renewal and hand back unused per-second time. */
+function settlePayers(call: Call, at: number): void {
+  for (const [id, payer] of call.payers) {
+    if (payer.renew) clearTimeout(payer.renew);
+    const back = unusedMinor(payer, call, at);
+    payer.stopped = true;
+    if (back > 0) {
+      payer.spentMinor -= back;
+      void refund(id, back, call.id, 'Extra time not used').catch(() => undefined);
+    }
   }
 }
 

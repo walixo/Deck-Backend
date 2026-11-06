@@ -15,7 +15,7 @@ import { audit } from '../services/audit';
 import * as hub from '../services/matchHub';
 import { hoursAt, matchDay } from '../services/matchHours';
 import { refreshNights } from '../services/matchNights';
-import { addCredit, isPlus } from '../services/matchWallet';
+import { refund } from '../services/matchWallet';
 import { ApiError } from '../utils/ApiError';
 import type {
   MatchNightInput,
@@ -501,13 +501,7 @@ export async function approveMatchVerification(req: Request, res: Response): Pro
     { new: true },
   );
   if (profile) {
-    hub.update({
-      userId: String(profile.user),
-      gender: profile.gender,
-      plus: isPlus(profile),
-      verified: true,
-      blocked: profile.blocked.map(String),
-    });
+    hub.update(hub.presenceOf(profile));
   }
   await audit(req, {
     action: 'match.verification.approved',
@@ -537,10 +531,9 @@ export async function declineMatchVerification(req: Request, res: Response): Pro
   verification.reviewedBy = req.user!._id;
   await verification.save();
   if (verification.priceMinor > 0) {
-    await addCredit(
+    await refund(
       verification.user,
       verification.priceMinor,
-      'refund',
       String(verification._id),
       'Verified badge check declined',
     );

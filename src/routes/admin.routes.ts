@@ -1,3 +1,10 @@
+import {
+  adminBrandCards,
+  refundBrandOrder,
+  retryBrandOrder,
+  syncBrandCards,
+  updateBrandProduct,
+} from '../controllers/matchBrandCards.controller';
 import { updateSite } from '../controllers/site.controller';
 import { siteSettingsSchema } from '../validators/site.validators';
 import {
@@ -46,6 +53,7 @@ import {
   unpauseMatchUser,
 } from '../controllers/matchAdmin.controller';
 import {
+  matchBrandProductSchema,
   matchGiftCardIssueSchema,
   matchNightSchema,
   matchPauseSchema,
@@ -190,6 +198,15 @@ router.patch(
 router.delete('/match/people/:userId/section-request', asyncHandler(declineMatchSection));
 router.put('/site', validate(siteSettingsSchema), asyncHandler(updateSite));
 router.get('/match/quality', asyncHandler(matchQuality));
+router.get('/match/brand-cards', asyncHandler(adminBrandCards));
+router.post('/match/brand-cards/sync', asyncHandler(syncBrandCards));
+router.patch(
+  '/match/brand-cards/:productId',
+  validate(matchBrandProductSchema),
+  asyncHandler(updateBrandProduct),
+);
+router.post('/match/brand-cards/orders/:reference/retry', asyncHandler(retryBrandOrder));
+router.post('/match/brand-cards/orders/:reference/refund', asyncHandler(refundBrandOrder));
 router.get('/match/revenue', asyncHandler(matchRevenue));
 router.get('/match/nights', asyncHandler(listMatchNights));
 router.put('/match/nights', validate(matchNightSchema), asyncHandler(saveMatchNight));

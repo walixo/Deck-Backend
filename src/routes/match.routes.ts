@@ -1,4 +1,9 @@
 import {
+  buyBrandCard,
+  listBrandCards,
+  verifyBrandCard,
+} from '../controllers/matchBrandCards.controller';
+import {
   buyGiftCard,
   listGiftCards,
   redeemGiftCard,
@@ -9,6 +14,7 @@ import {
   callQuality,
   connected,
   iceServers,
+  keepTalking,
   createMe,
   extend,
   getMe,
@@ -20,6 +26,7 @@ import {
   report,
   requestSection,
   share,
+  stopPaying,
   signal,
   stream,
   subscribePush,
@@ -42,6 +49,7 @@ import { validate } from '../middleware/validate';
 import { asyncHandler } from '../utils/asyncHandler';
 import {
   createMatchProfileSchema,
+  matchBrandBuySchema,
   matchGiftCardSchema,
   matchGiftSchema,
   matchQualitySchema,
@@ -101,7 +109,9 @@ const iceLimiter = rateLimit({
 });
 router.get('/ice', auth, iceLimiter, asyncHandler(iceServers));
 router.post('/calls/:callId/connected', auth, connected);
-router.post('/calls/:callId/extend', auth, moneyLimiter, asyncHandler(extend));
+router.post('/calls/:callId/extend', auth, extend);
+router.post('/calls/:callId/pay', auth, moneyLimiter, asyncHandler(keepTalking));
+router.delete('/calls/:callId/pay', auth, asyncHandler(stopPaying));
 router.post(
   '/calls/:callId/gift',
   auth,
@@ -176,5 +186,16 @@ router.post(
   validate(matchRedeemSchema),
   asyncHandler(redeemGiftCard),
 );
+
+/* Other brands' gift cards, through Reloadly. */
+router.get('/brand-cards', auth, asyncHandler(listBrandCards));
+router.post(
+  '/brand-cards',
+  auth,
+  moneyLimiter,
+  validate(matchBrandBuySchema),
+  asyncHandler(buyBrandCard),
+);
+router.post('/brand-cards/:reference/verify', auth, asyncHandler(verifyBrandCard));
 
 export default router;

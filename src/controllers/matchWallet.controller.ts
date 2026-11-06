@@ -15,7 +15,6 @@ import * as hub from '../services/matchHub';
 import { hoursAt, matchDay } from '../services/matchHours';
 import { tonight } from '../services/matchNights';
 import {
-  addCredit,
   applyVerifiedTopup,
   creditTopup,
   extendedPlus,
@@ -25,6 +24,7 @@ import {
   MATCH_PRICES,
   MATCH_TOPUP_PACKS,
   naira,
+  refund,
   spend,
   topupReference,
 } from '../services/matchWallet';
@@ -65,13 +65,7 @@ async function profileOf(req: Request): Promise<IMatchProfile> {
 
 /** Republishes someone's flags to the hub after Match+ or a badge changes. */
 function refreshPresence(profile: IMatchProfile): void {
-  hub.update({
-    userId: String(profile.user),
-    gender: profile.gender,
-    plus: isPlus(profile),
-    verified: Boolean(profile.verifiedAt),
-    blocked: profile.blocked.map(String),
-  });
+  hub.update(hub.presenceOf(profile));
 }
 
 /** The balance, what things cost, tonight's night and the badge's state. */
@@ -223,7 +217,7 @@ export async function joinNight(req: Request, res: Response): Promise<void> {
     await MatchEntry.create({ user: profile.user, day, priceMinor: night.theme.entryMinor });
   } catch {
     /* Two taps raced and the other one entered: give this one back. */
-    await addCredit(profile.user, night.theme.entryMinor, 'refund', day, 'Already entered');
+    await refund(profile.user, night.theme.entryMinor, day, 'Already entered');
   }
   res.json({ success: true, data: { entered: true, creditMinor } });
 }

@@ -211,7 +211,7 @@ export const env = {
    * Match: how long two people talk, and how long afterwards they may choose
    * to swap X and Instagram usernames. Settable so a test need not wait two minutes.
    */
-  matchCallSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_CALL_SECONDS ?? 120))),
+  matchCallSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_CALL_SECONDS ?? 60))),
   matchShareSeconds: Math.min(600, Math.max(5, Number(process.env.MATCH_SHARE_SECONDS ?? 90))),
   /*
    * Match is open in the evening, Lagos time: "20-22" is 8pm to 10pm at
@@ -249,6 +249,23 @@ export const env = {
    * relay only when the two networks can't reach each other. The API token is
    * a secret. Without both, calls are direct-only, as before.
    */
+  /**
+   * Reloadly, the gift card wholesaler behind the other brands' cards sold in
+   * Match (Chowdeck, Jumia…). From the Reloadly dashboard → Developers → API
+   * settings; the secret is a secret. `sandbox` uses the test wallet. Without
+   * the keys, brand cards simply aren't offered. The URLs are overridable for
+   * tests only.
+   */
+  reloadly: {
+    clientId: process.env.RELOADLY_CLIENT_ID ?? '',
+    clientSecret: process.env.RELOADLY_CLIENT_SECRET ?? '',
+    environment: (process.env.RELOADLY_ENVIRONMENT === 'live' ? 'live' : 'sandbox') as
+      'live' | 'sandbox',
+    country: (process.env.RELOADLY_COUNTRY ?? 'NG').toUpperCase(),
+    authUrl: process.env.RELOADLY_AUTH_URL ?? 'https://auth.reloadly.com/oauth/token',
+    apiUrl: process.env.RELOADLY_API_URL ?? '',
+  },
+
   cloudflareTurn: {
     keyId: process.env.CLOUDFLARE_TURN_KEY_ID ?? '',
     apiToken: process.env.CLOUDFLARE_TURN_API_TOKEN ?? '',

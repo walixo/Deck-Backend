@@ -4,7 +4,9 @@ import { env } from './config/env';
 import { checkBachsKey } from './services/bachs';
 import { assertSigningKey } from './services/gameIdKeys';
 import { loadTalkedCounts } from './services/matchHub';
+import { startBrandRetries } from './services/brandCards';
 import { startNights } from './services/matchNights';
+import { migratePots } from './services/matchWallet';
 import { startMatchPings } from './services/matchPing';
 import { startScheduler, stopScheduler } from './services/scheduler';
 
@@ -35,6 +37,12 @@ async function bootstrap(): Promise<void> {
   startScheduler();
   startMatchPings();
   startNights();
+  startBrandRetries();
+  /* Balances from before credit had pots were all paid for. */
+  migratePots().catch((error: Error) => {
+    // eslint-disable-next-line no-console
+    console.error(`[match] could not sort credit into pots: ${error.message}`);
+  });
   loadTalkedCounts().catch((error: Error) => {
     // eslint-disable-next-line no-console
     console.error(`[match] could not load who has talked to whom: ${error.message}`);

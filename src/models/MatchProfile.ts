@@ -19,6 +19,19 @@ export interface MatchHandles {
   instagram: string;
 }
 
+/** How someone pays for time past the free minutes: by the second, or by the whole minute. */
+export const MATCH_BILLINGS = ['second', 'minute'] as const;
+export type MatchBilling = (typeof MATCH_BILLINGS)[number];
+
+/**
+ * Where credit came from, spent in this order: Deck's free credit first,
+ * then gift card credit, then credit people paid for. `creditMinor` is
+ * always their sum, and is the only balance anyone is shown.
+ */
+export const MATCH_POTS = ['bonus', 'gift', 'paid'] as const;
+export type MatchPot = (typeof MATCH_POTS)[number];
+export type MatchPots = Record<MatchPot, number>;
+
 export interface IMatchProfile extends Document {
   _id: mongoose.Types.ObjectId;
   user: mongoose.Types.ObjectId;
@@ -36,8 +49,14 @@ export interface IMatchProfile extends Document {
   sectionRequest: { note: string; at: Date } | null;
   /** When this person was last pinged that someone is free — once an evening. */
   pingedAt: Date | null;
-  /** Prepaid Match credit, kobo. Spent on extra minutes, gifts, entry, badges and Match+. */
+  /** Prepaid Match credit, kobo: the sum of `pots`, and the balance people see. */
   creditMinor: number;
+  /** The same credit by where it came from; spent bonus → gift → paid. */
+  pots: MatchPots;
+  /** Paid time past the free minutes: per second (₦2/s) or per minute (₦100). */
+  billing: MatchBilling;
+  /** ISO 3166 country code they chose, e.g. NG. Empty until asked. Matching prefers the same one. */
+  country: string;
   /** Match+ runs until this moment; null or past means not a member. */
   plusUntil: Date | null;
   /** When staff approved their selfie check; shown as a Verified badge. */
@@ -64,6 +83,13 @@ const profileSchema = new Schema<IMatchProfile>(
     },
     pingedAt: { type: Date, default: null },
     creditMinor: { type: Number, default: 0, min: 0 },
+    pots: {
+      bonus: { type: Number, default: 0, min: 0 },
+      gift: { type: Number, default: 0, min: 0 },
+      paid: { type: Number, default: 0, min: 0 },
+    },
+    billing: { type: String, enum: MATCH_BILLINGS, default: 'second' },
+    country: { type: String, default: '', uppercase: true, match: /^([A-Z]{2})?$/ },
     plusUntil: { type: Date, default: null },
     verifiedAt: { type: Date, default: null },
   },

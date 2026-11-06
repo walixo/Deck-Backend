@@ -11,7 +11,6 @@ import {
   giftCardLabel,
   giftCardProduct,
   giftCardReference,
-  isPlus,
   MATCH_CURRENCY,
   MATCH_GIFT_CARD_MONTHS,
   MATCH_GIFT_CARDS,
@@ -148,13 +147,7 @@ export async function redeemGiftCard(req: Request, res: Response): Promise<void>
   if (result.plusUntil) {
     const profile = await MatchProfile.findOne({ user: req.user!._id });
     if (profile) {
-      hub.update({
-        userId: String(profile.user),
-        gender: profile.gender,
-        plus: isPlus(profile),
-        verified: Boolean(profile.verifiedAt),
-        blocked: profile.blocked.map(String),
-      });
+      hub.update(hub.presenceOf(profile));
     }
   }
   res.json({

@@ -9,7 +9,13 @@ import {
   type MatchGiftKind,
   type MatchLedgerKind,
 } from '../models/MatchMoney';
-import { MatchProfile, type IMatchProfile } from '../models/MatchProfile';
+import {
+  MATCH_POTS,
+  MatchProfile,
+  type IMatchProfile,
+  type MatchPot,
+  type MatchPots,
+} from '../models/MatchProfile';
 import { ApiError } from '../utils/ApiError';
 import type { VerifiedPayment } from './bachs';
 
@@ -23,8 +29,10 @@ import type { VerifiedPayment } from './bachs';
 export const MATCH_CURRENCY = 'NGN';
 
 export const MATCH_PRICES = {
-  /** Each extra minute after the free one, per person; free with Match+. */
+  /** Paid time by the whole minute, for whoever pays to keep a call going; free with Match+. */
   minute: 100_00,
+  /** Paid time by the second: ₦2, about ₦120 a minute, for those who'd rather pay for what they use. */
+  second: 2_00,
   gift: { rose: 200_00, drink: 500_00 } satisfies Record<MatchGiftKind, number>,
   badge: 500_00,
   plus: 1_500_00,
@@ -40,7 +48,9 @@ const DAY = 24 * 60 * 60 * 1000;
 export const isPlus = (profile: Pick<IMatchProfile, 'plusUntil'>, now = Date.now()) =>
   Boolean(profile.plusUntil && profile.plusUntil.getTime() > now);
 
-export const naira = (minor: number) => `₦${(minor / 100).toLocaleString('en-NG')}`;
+/** Naira from kobo: whole amounts as ₦1,500, anything with kobo as ₦5,197.50. */
+export const naira = (minor: number) =>
+  `₦${(minor / 100).toLocaleString('en-NG', minor % 100 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : {})}`;
 
 /** A top-up reference, in the same shape as Deck's other payment references. */
 export function topupReference(): string {
@@ -74,13 +84,38 @@ async function record(
   balanceAfterMinor: number,
   ref: string,
   note: string,
+  pots: Partial<MatchPots> = {},
 ) {
-  await MatchLedger.create({ user: userId, kind, amountMinor, balanceAfterMinor, ref, note });
+  await MatchLedger.create({ user: userId, kind, amountMinor, balanceAfterMinor, ref, note, pots });
+}
+
+/** The order credit is spent in: Deck's free credit, then gift cards, then paid. */
+const SPEND_ORDER: readonly MatchPot[] = MATCH_POTS;
+
+const potsOf = (profile: Pick<IMatchProfile, 'pots'>): MatchPots => ({
+  bonus: profile.pots?.bonus ?? 0,
+  gift: profile.pots?.gift ?? 0,
+  paid: profile.pots?.paid ?? 0,
+});
+
+/**
+ * Profiles from before credit had pots: everything they hold was paid for.
+ * Run once at start-up; also used to heal a profile whose pots don't add up.
+ */
+export async function migratePots(userId?: mongoose.Types.ObjectId | string): Promise<void> {
+  await MatchProfile.updateMany(
+    userId
+      ? { user: userId }
+      : { $or: [{ pots: { $exists: false } }, { 'pots.paid': { $exists: false } }] },
+    [{ $set: { pots: { bonus: 0, gift: 0, paid: '$creditMinor' } } }],
+  );
 }
 
 /**
- * Spends credit. Atomic: the balance is only taken if it covers the price,
- * so two taps at once can never spend the same naira twice.
+ * Spends credit, draining the pots in order — free credit, then gift card
+ * credit, then paid credit — so people only ever see one balance. The update
+ * only lands if the pots are exactly as they were read, so two taps at once
+ * can never spend the same naira twice; a clash just reads again.
  */
 export async function spend(
   userId: mongoose.Types.ObjectId | string,
@@ -90,34 +125,116 @@ export async function spend(
   note: string,
 ): Promise<number> {
   if (amountMinor <= 0) return (await MatchProfile.findOne({ user: userId }))?.creditMinor ?? 0;
-  const updated = await MatchProfile.findOneAndUpdate(
-    { user: userId, creditMinor: { $gte: amountMinor } },
-    { $inc: { creditMinor: -amountMinor } },
-    { new: true },
-  );
-  if (!updated) {
-    const balance = (await MatchProfile.findOne({ user: userId }))?.creditMinor ?? 0;
-    throw new NotEnoughCredit(amountMinor, balance, String(userId));
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const profile = await MatchProfile.findOne({ user: userId }).select('creditMinor pots');
+    if (!profile) throw ApiError.badRequest('Set up Match first');
+    if (profile.creditMinor < amountMinor) {
+      throw new NotEnoughCredit(amountMinor, profile.creditMinor, String(userId));
+    }
+    const pots = potsOf(profile);
+    if (SPEND_ORDER.reduce((sum, pot) => sum + pots[pot], 0) !== profile.creditMinor) {
+      await migratePots(userId);
+      continue;
+    }
+    let left = amountMinor;
+    const take: Partial<MatchPots> = {};
+    for (const pot of SPEND_ORDER) {
+      const from = Math.min(left, pots[pot]);
+      if (from > 0) take[pot] = from;
+      left -= from;
+    }
+    const updated = await MatchProfile.findOneAndUpdate(
+      {
+        _id: profile._id,
+        creditMinor: profile.creditMinor,
+        'pots.bonus': pots.bonus,
+        'pots.gift': pots.gift,
+        'pots.paid': pots.paid,
+      },
+      {
+        $inc: {
+          creditMinor: -amountMinor,
+          ...Object.fromEntries(
+            Object.entries(take).map(([pot, minor]) => [`pots.${pot}`, -minor]),
+          ),
+        },
+      },
+      { new: true },
+    );
+    if (updated) {
+      const split = Object.fromEntries(Object.entries(take).map(([pot, minor]) => [pot, -minor]));
+      await record(userId, kind, -amountMinor, updated.creditMinor, ref, note, split);
+      return updated.creditMinor;
+    }
   }
-  await record(userId, kind, -amountMinor, updated.creditMinor, ref, note);
-  return updated.creditMinor;
+  throw ApiError.conflict('Your balance is busy — try again');
 }
 
-/** Adds credit: a paid top-up, or money handed back. */
+/**
+ * Adds credit to one pot: a top-up is paid credit, a bought gift card is gift
+ * credit, anything Deck gives away is free credit. Money handed back for
+ * something goes through `refund` instead, so it returns where it came from.
+ */
 export async function addCredit(
   userId: mongoose.Types.ObjectId | string,
   amountMinor: number,
   kind: MatchLedgerKind,
   ref: string,
   note: string,
+  pot: MatchPot = kind === 'topup' ? 'paid' : kind === 'giftcard' ? 'gift' : 'bonus',
 ): Promise<number> {
   const updated = await MatchProfile.findOneAndUpdate(
     { user: userId },
-    { $inc: { creditMinor: amountMinor } },
+    { $inc: { creditMinor: amountMinor, [`pots.${pot}`]: amountMinor } },
     { new: true },
   );
   if (!updated) throw ApiError.badRequest('Set up Match first');
-  await record(userId, kind, amountMinor, updated.creditMinor, ref, note);
+  await record(userId, kind, amountMinor, updated.creditMinor, ref, note, { [pot]: amountMinor });
+  return updated.creditMinor;
+}
+
+/**
+ * Hands back up to `amountMinor` of what was spent under `ref`, into the pots
+ * it came out of — the last drained first, so paid credit comes back before
+ * free credit. Spending from before pots existed comes back as paid credit.
+ */
+export async function refund(
+  userId: mongoose.Types.ObjectId | string,
+  amountMinor: number,
+  ref: string,
+  note: string,
+): Promise<number> {
+  const rows = await MatchLedger.find({ user: userId, ref }).select('kind amountMinor pots').lean();
+  const owed: MatchPots = { bonus: 0, gift: 0, paid: 0 };
+  let unsplit = 0;
+  for (const row of rows) {
+    const split = (row.pots ?? {}) as Partial<MatchPots>;
+    const total = SPEND_ORDER.reduce((sum, pot) => sum + (split[pot] ?? 0), 0);
+    if (total === 0 && (row.amountMinor < 0 || row.kind === 'refund')) unsplit -= row.amountMinor;
+    for (const pot of SPEND_ORDER) owed[pot] -= split[pot] ?? 0;
+  }
+  owed.paid += unsplit;
+  let left = amountMinor;
+  const back: Partial<MatchPots> = {};
+  for (const pot of [...SPEND_ORDER].reverse()) {
+    const give = Math.min(left, Math.max(0, owed[pot]));
+    if (give > 0) back[pot] = give;
+    left -= give;
+  }
+  /* More than was ever spent under this ref: the rest is free credit. */
+  if (left > 0) back.bonus = (back.bonus ?? 0) + left;
+  const updated = await MatchProfile.findOneAndUpdate(
+    { user: userId },
+    {
+      $inc: {
+        creditMinor: amountMinor,
+        ...Object.fromEntries(Object.entries(back).map(([pot, minor]) => [`pots.${pot}`, minor])),
+      },
+    },
+    { new: true },
+  );
+  if (!updated) throw ApiError.badRequest('Set up Match first');
+  await record(userId, 'refund', amountMinor, updated.creditMinor, ref, note, back);
   return updated.creditMinor;
 }
 
@@ -140,7 +257,7 @@ export async function spendBoth(
   } catch (error) {
     for (const charge of done) {
       if (charge.amountMinor > 0) {
-        await addCredit(charge.userId, charge.amountMinor, 'refund', ref, `${note} — not added`);
+        await refund(charge.userId, charge.amountMinor, ref, `${note} — not added`);
       }
     }
     throw error;
@@ -338,6 +455,7 @@ export async function redeemGiftCard(
       'giftcard',
       card.reference,
       `Gift card · ${label}`,
+      card.mode === 'issued' ? 'bonus' : 'gift',
     );
     return { card, creditMinor, plusUntil: null };
   }

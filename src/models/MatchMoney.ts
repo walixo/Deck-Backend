@@ -79,6 +79,8 @@ export interface IMatchLedger extends Document {
   /** What it was for: a call id, a top-up reference, a night's date. */
   ref: string;
   note: string;
+  /** How the change split across the credit pots, signed like amountMinor. */
+  pots: { bonus?: number; gift?: number; paid?: number };
   createdAt: Date;
 }
 
@@ -90,9 +92,15 @@ const ledgerSchema = new Schema<IMatchLedger>(
     balanceAfterMinor: { type: Number, required: true },
     ref: { type: String, default: '' },
     note: { type: String, default: '' },
+    pots: {
+      bonus: { type: Number },
+      gift: { type: Number },
+      paid: { type: Number },
+    },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );
+ledgerSchema.index({ user: 1, ref: 1 });
 ledgerSchema.index({ user: 1, createdAt: -1 });
 ledgerSchema.index({ kind: 1, createdAt: -1 });
 
@@ -337,3 +345,162 @@ giftCardSchema.index({ status: 1, createdAt: -1 });
 
 export const MatchGiftCard: Model<IMatchGiftCard> =
   mongoose.models.MatchGiftCard ?? mongoose.model<IMatchGiftCard>('MatchGiftCard', giftCardSchema);
+
+/* ------------------------------------------------------ brand gift cards --- */
+
+/**
+ * Another company's gift card that Match sells (Chowdeck, Jumia…), bought
+ * from Reloadly. Staff sync the catalogue and switch on the ones to offer;
+ * this keeps Reloadly's product as it was last synced, so the shop doesn't
+ * ask Reloadly every time someone looks.
+ */
+export interface IMatchBrandProduct extends Document {
+  _id: mongoose.Types.ObjectId;
+  productId: number;
+  name: string;
+  brand: string;
+  logoUrl: string;
+  countryCode: string;
+  recipientCurrency: string;
+  senderCurrency: string;
+  /** FIXED: only `denominations`; RANGE: anything from `min` to `max`. */
+  denominationType: 'FIXED' | 'RANGE';
+  denominations: number[];
+  /** What Reloadly charges, in sender currency, for each fixed denomination. */
+  senderPrices: Record<string, number>;
+  min: number | null;
+  max: number | null;
+  senderFee: number;
+  /** Reloadly's discount to Deck, percent: Deck's margin before any markup. */
+  discountPct: number;
+  redeemInstruction: string;
+  /** On sale in Match. */
+  enabled: boolean;
+  /** Added on top of Reloadly's price, percent. */
+  markupPct: number;
+  syncedAt: Date;
+}
+
+const brandProductSchema = new Schema<IMatchBrandProduct>(
+  {
+    productId: { type: Number, required: true, unique: true },
+    name: { type: String, required: true },
+    brand: { type: String, required: true },
+    logoUrl: { type: String, default: '' },
+    countryCode: { type: String, required: true },
+    recipientCurrency: { type: String, required: true },
+    senderCurrency: { type: String, required: true },
+    denominationType: { type: String, enum: ['FIXED', 'RANGE'], required: true },
+    denominations: { type: [Number], default: [] },
+    senderPrices: { type: Schema.Types.Mixed, default: {} },
+    min: { type: Number, default: null },
+    max: { type: Number, default: null },
+    senderFee: { type: Number, default: 0 },
+    discountPct: { type: Number, default: 0 },
+    redeemInstruction: { type: String, default: '' },
+    enabled: { type: Boolean, default: false },
+    markupPct: { type: Number, default: 0, min: 0, max: 100 },
+    syncedAt: { type: Date, required: true },
+  },
+  { timestamps: false },
+);
+
+export const MatchBrandProduct: Model<IMatchBrandProduct> =
+  mongoose.models.MatchBrandProduct ??
+  mongoose.model<IMatchBrandProduct>('MatchBrandProduct', brandProductSchema);
+
+export const MATCH_BRAND_ORDER_STATUSES = [
+  'pending', // checkout opened, not paid
+  'paid', // paid; being bought from Reloadly
+  'fulfilled', // the code is in
+  'failed', // the payment failed
+  'stuck', // paid but Reloadly couldn't fill it yet: staff retry or refund
+  'refunded',
+] as const;
+export type MatchBrandOrderStatus = (typeof MATCH_BRAND_ORDER_STATUSES)[number];
+
+/**
+ * One brand card bought in Match. Paid through Bachs like a top-up; only once
+ * the money is confirmed is the card bought from Reloadly, with this order's
+ * reference as Reloadly's `customIdentifier`, so a retry can always find out
+ * whether the first attempt went through before ordering again. The code is
+ * a bearer secret: never selected unless asked for, shown only to the buyer.
+ */
+export interface IMatchBrandOrder extends Document {
+  _id: mongoose.Types.ObjectId;
+  reference: string;
+  buyer: mongoose.Types.ObjectId;
+  productId: number;
+  brand: string;
+  productName: string;
+  logoUrl: string;
+  /** The card's value, in the brand's currency. */
+  faceValue: number;
+  faceCurrency: string;
+  /** What the buyer paid, kobo. */
+  priceMinor: number;
+  currency: string;
+  toName: string;
+  status: MatchBrandOrderStatus;
+  mode: 'live' | 'test';
+  checkoutId?: string;
+  checkoutUrl?: string;
+  paidAt: Date | null;
+  reloadlyTransactionId: number | null;
+  /** What Reloadly charged Deck, in its currency, after its discount. */
+  costAmount: number | null;
+  costCurrency: string;
+  code: { cardNumber: string; pinCode: string; redemptionUrl: string } | null;
+  redeemInstruction: string;
+  /** Why it is stuck, for staff. */
+  problem: string;
+  attempts: number;
+  /** One worker at a time buys the card; this is its claim. */
+  lockedUntil: Date | null;
+  fulfilledAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const brandOrderSchema = new Schema<IMatchBrandOrder>(
+  {
+    reference: { type: String, required: true, unique: true },
+    buyer: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    productId: { type: Number, required: true },
+    brand: { type: String, required: true },
+    productName: { type: String, required: true },
+    logoUrl: { type: String, default: '' },
+    faceValue: { type: Number, required: true },
+    faceCurrency: { type: String, required: true },
+    priceMinor: { type: Number, required: true, min: 1 },
+    currency: { type: String, required: true },
+    toName: { type: String, default: '', maxlength: 40 },
+    status: { type: String, enum: MATCH_BRAND_ORDER_STATUSES, default: 'pending' },
+    mode: { type: String, enum: ['live', 'test'], required: true },
+    checkoutId: { type: String, index: true, sparse: true },
+    checkoutUrl: { type: String },
+    paidAt: { type: Date, default: null },
+    reloadlyTransactionId: { type: Number, default: null },
+    costAmount: { type: Number, default: null },
+    costCurrency: { type: String, default: '' },
+    code: {
+      type: new Schema(
+        { cardNumber: String, pinCode: String, redemptionUrl: String },
+        { _id: false },
+      ),
+      default: null,
+      select: false,
+    },
+    redeemInstruction: { type: String, default: '' },
+    problem: { type: String, default: '' },
+    attempts: { type: Number, default: 0 },
+    lockedUntil: { type: Date, default: null },
+    fulfilledAt: { type: Date, default: null },
+  },
+  { timestamps: true },
+);
+brandOrderSchema.index({ status: 1, createdAt: -1 });
+
+export const MatchBrandOrder: Model<IMatchBrandOrder> =
+  mongoose.models.MatchBrandOrder ??
+  mongoose.model<IMatchBrandOrder>('MatchBrandOrder', brandOrderSchema);

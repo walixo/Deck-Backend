@@ -8,13 +8,7 @@ import { hoursAt, matchDay } from '../services/matchHours';
 import { tonight } from '../services/matchNights';
 import { pushPublicKey } from '../services/matchPing';
 import { iceServersFor } from '../services/matchRelay';
-import {
-  addCredit,
-  isPlus,
-  MATCH_PRICES,
-  NotEnoughCredit,
-  spendBoth,
-} from '../services/matchWallet';
+import { isPlus } from '../services/matchWallet';
 import { ApiError } from '../utils/ApiError';
 import type {
   CreateMatchProfileInput,
@@ -55,16 +49,12 @@ function toProfileResponse(profile: IMatchProfile, pings = false) {
     creditMinor: profile.creditMinor,
     plusUntil: isPlus(profile) ? profile.plusUntil : null,
     verified: Boolean(profile.verifiedAt),
+    billing: profile.billing ?? 'second',
+    country: profile.country ?? '',
   };
 }
 
-const presence = (profile: IMatchProfile): hub.Presence => ({
-  userId: String(profile.user),
-  gender: profile.gender,
-  plus: isPlus(profile),
-  verified: Boolean(profile.verifiedAt),
-  blocked: profile.blocked.map(String),
-});
+const presence = hub.presenceOf;
 
 /** The caller's profile, ready to match — or a reason they cannot. */
 async function ready(req: Request): Promise<IMatchProfile> {
@@ -131,6 +121,7 @@ export async function createMe(req: Request, res: Response): Promise<void> {
     }
     if (input.x !== undefined) existing.x = input.x;
     if (input.instagram !== undefined) existing.instagram = input.instagram;
+    if (input.country !== undefined) existing.country = input.country;
     await existing.save();
     hub.update(presence(existing));
     res.json({ success: true, data: toProfileResponse(existing) });
@@ -141,6 +132,7 @@ export async function createMe(req: Request, res: Response): Promise<void> {
     gender: input.gender,
     x: input.x ?? '',
     instagram: input.instagram ?? '',
+    country: input.country ?? '',
     adultAt: new Date(),
   });
   res.status(201).json({ success: true, data: toProfileResponse(profile) });
@@ -156,6 +148,8 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
   }
   if (input.x !== undefined) profile.x = input.x;
   if (input.instagram !== undefined) profile.instagram = input.instagram;
+  if (input.country !== undefined) profile.country = input.country;
+  if (input.billing !== undefined) profile.billing = input.billing;
   await profile.save();
   hub.update(presence(profile));
   res.json({ success: true, data: toProfileResponse(profile) });
@@ -250,49 +244,32 @@ export function connected(req: Request, res: Response): void {
   res.json({ success: true, data: { ok: true } });
 }
 
-/* The first added minute is free for everyone; after that, free with Match+. */
-const minutePrice = (round: number, profile: IMatchProfile | undefined) =>
-  round === 0 || (profile && isPlus(profile)) ? 0 : MATCH_PRICES.minute;
+/** The free extra minute: either person's tap adds it, for both. */
+export function extend(req: Request, res: Response): void {
+  hub.addFreeMinute(String(req.user!._id), String(req.params.callId));
+  res.json({ success: true, data: { added: true } });
+}
 
 /**
- * +1 minute. Charged only when both have pressed, and to both or neither: a
- * vote from someone who could not pay is refused before it counts.
+ * "Keep talking": pays, by this person's chosen billing, to carry the call on
+ * for both once the free time is up. Free with Match+. Refused at once if
+ * they can't cover the first block, since no checkout can open mid-call.
  */
-export async function extend(req: Request, res: Response): Promise<void> {
+export async function keepTalking(req: Request, res: Response): Promise<void> {
   const profile = await ready(req);
-  const userId = String(req.user!._id);
-  const callId = String(req.params.callId);
-  const price = minutePrice(hub.minutesAdded(userId, callId), profile);
-  if (price > profile.creditMinor) throw new NotEnoughCredit(price, profile.creditMinor, userId);
+  await hub.keepTalking(
+    String(req.user!._id),
+    String(req.params.callId),
+    profile.billing ?? 'second',
+    isPlus(profile),
+  );
+  res.json({ success: true, data: { paying: true } });
+}
 
-  const vote = hub.voteMinute(userId, callId);
-  if (!vote.agreed) {
-    res.json({ success: true, data: { agreed: false } });
-    return;
-  }
-  const both = await MatchProfile.find({ user: { $in: [vote.male, vote.female] } });
-  const charges = [vote.male, vote.female].map((id) => ({
-    userId: id,
-    amountMinor: minutePrice(
-      vote.round,
-      both.find((p) => String(p.user) === id),
-    ),
-  }));
-  try {
-    await spendBoth(charges, 'minute', callId, 'An extra minute');
-  } catch (error) {
-    hub.refuseMinute(callId, error instanceof NotEnoughCredit ? error.userId : '');
-    throw error;
-  }
-  if (!hub.grantMinute(callId)) {
-    /* The call ended while it was being paid for: hand the money back. */
-    for (const charge of charges) {
-      if (charge.amountMinor > 0) {
-        await addCredit(charge.userId, charge.amountMinor, 'refund', callId, 'Call ended first');
-      }
-    }
-  }
-  res.json({ success: true, data: { agreed: true } });
+/** Stops paying; unused per-second time comes back. */
+export async function stopPaying(req: Request, res: Response): Promise<void> {
+  await hub.stopPaying(String(req.user!._id), String(req.params.callId));
+  res.json({ success: true, data: { paying: false } });
 }
 
 export function leaveCall(req: Request, res: Response): void {

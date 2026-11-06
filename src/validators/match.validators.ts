@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { MATCH_REPORT_REASONS } from '../models/MatchCall';
 import { MATCH_GIFTS } from '../models/MatchMoney';
-import { MATCH_GENDERS } from '../models/MatchProfile';
+import { MATCH_BILLINGS, MATCH_GENDERS } from '../models/MatchProfile';
 
 /**
  * A username typed with or without its @, or pasted as a profile link; stored
@@ -30,11 +30,19 @@ const instagramField = handleField(
   'Instagram usernames are up to 30 letters, numbers, dots or underscores',
 );
 
+/** A two-letter ISO country code, or empty to clear it. */
+const countryField = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^([A-Z]{2})?$/, 'Choose a country');
+
 export const createMatchProfileSchema = z
   .object({
     gender: z.enum(MATCH_GENDERS),
     x: xField.optional(),
     instagram: instagramField.optional(),
+    country: countryField.optional(),
     adult: z.literal(true, { errorMap: () => ({ message: 'Match is for people 18 and over' }) }),
   })
   .strict();
@@ -45,6 +53,8 @@ export const updateMatchProfileSchema = z
     instagram: instagramField.optional(),
     /* Accepted so a client may resend its whole form; a different value is refused. */
     gender: z.enum(MATCH_GENDERS).optional(),
+    country: countryField.optional(),
+    billing: z.enum(MATCH_BILLINGS).optional(),
   })
   .strict();
 
@@ -127,6 +137,26 @@ export const matchGiftCardIssueSchema = z
   })
   .strict();
 
+/** Buying another brand's gift card: which, how much (in its currency), and who for. */
+export const matchBrandBuySchema = z
+  .object({
+    productId: z.number().int().positive(),
+    faceValue: z.number().positive().max(10_000_000),
+    toName: z.string().trim().max(40).optional().default(''),
+  })
+  .strict();
+
+/** Staff: a brand on or off sale, and its markup. */
+export const matchBrandProductSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    markupPct: z.number().min(0).max(100).optional(),
+  })
+  .strict()
+  .refine((value) => value.enabled !== undefined || value.markupPct !== undefined, {
+    message: 'Nothing to change',
+  });
+
 /** A selfie as a data URL; the screen shrinks it to a few hundred kilobytes. */
 export const matchVerificationSchema = z
   .object({ photo: z.string().max(900_000, 'That photo is too large') })
@@ -181,6 +211,8 @@ export type MatchSectionInput = z.infer<typeof matchSectionSchema>;
 export type MatchPauseInput = z.infer<typeof matchPauseSchema>;
 export type MatchTopupInput = z.infer<typeof matchTopupSchema>;
 export type MatchGiftInput = z.infer<typeof matchGiftSchema>;
+export type MatchBrandBuyInput = z.infer<typeof matchBrandBuySchema>;
+export type MatchBrandProductInput = z.infer<typeof matchBrandProductSchema>;
 export type MatchQualityInput = z.infer<typeof matchQualitySchema>;
 export type MatchGiftCardInput = z.infer<typeof matchGiftCardSchema>;
 export type MatchRedeemInput = z.infer<typeof matchRedeemSchema>;
