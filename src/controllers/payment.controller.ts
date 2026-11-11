@@ -18,6 +18,9 @@ import {
 import { handleConnectEvent } from '../services/payouts';
 import { applyVerifiedBrandOrder } from '../services/brandCards';
 import { applyVerifiedGiftCard, applyVerifiedTopup } from '../services/matchWallet';
+import { VaultTopup } from '../models/VaultPartner';
+import { VaultOrder } from '../models/VaultOrder';
+import { applyVerifiedVaultOrder, applyVerifiedVaultTopup } from '../services/vault';
 import { nextOpening } from '../services/adInventory';
 import { evaluateBadges } from '../services/badges';
 import { formatMinor, notify } from '../services/notify';
@@ -504,6 +507,22 @@ async function settle(
   const giftCard = await MatchGiftCard.findOne(ref ? { reference: ref } : { checkoutId });
   if (giftCard) {
     await applyVerifiedGiftCard(giftCard, verified);
+    return;
+  }
+
+  /* Vault: a distributor topping up their wallet. */
+  const vaultTopup = await VaultTopup.findOne(ref ? { reference: ref } : { checkoutId });
+  if (vaultTopup) {
+    await applyVerifiedVaultTopup(vaultTopup, verified);
+    return;
+  }
+
+  /* Vault: somebody buying or gifting a card on the storefront. */
+  const vaultOrder = await VaultOrder.findOne(
+    ref ? { reference: ref } : { paymentReference: checkoutId },
+  );
+  if (vaultOrder) {
+    await applyVerifiedVaultOrder(vaultOrder, verified);
     return;
   }
 

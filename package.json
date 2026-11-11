@@ -2,7 +2,7 @@
   "name": "deck-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "REST API for Deck \u2014 launch, share, and discover new tech items",
+  "description": "REST API for Deck — launch, share, and discover new tech items",
   "main": "dist/server.js",
   "engines": {
     "node": ">=20"
@@ -32,7 +32,8 @@
     "import-candidates:prod": "node dist/scripts/import-candidates.js",
     "fetch-logos": "tsx src/scripts/fetch-logos.ts",
     "fetch-logos:prod": "node dist/scripts/fetch-logos.js",
-    "gameid:key": "node scripts/gameid-key.mjs"
+    "gameid:key": "node scripts/gameid-key.mjs",
+    "seed-vault": "tsx src/scripts/seed-vault.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

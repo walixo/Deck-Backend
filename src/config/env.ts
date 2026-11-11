@@ -272,6 +272,29 @@ export const env = {
   },
 
   /*
+   * Vault — Deck's gift card platform, at vault.onedeck.africa.
+   *
+   * `secret` is what card codes are encrypted with. Losing it does not merely
+   * lock people out the way a lost signing key would: every code already
+   * issued becomes unreadable, and the cards in people's hands stop being
+   * retrievable. Treat it as data, back it up with the database, and never
+   * rotate it without re-encrypting first.
+   *
+   * `testGrantMinor` is the play balance a new partner's sandbox starts with,
+   * so they can place a test order in the first minute without talking to
+   * anyone about money.
+   */
+  vault: {
+    secret: process.env.VAULT_SECRET ?? '',
+    /** Deck's cut of what a buyer is charged. */
+    feePercent: Math.min(50, Math.max(0, Number(process.env.VAULT_FEE_PERCENT ?? 3))),
+    /** ₦500,000 of sandbox money, in minor units. */
+    testGrantMinor: Math.max(0, Number(process.env.VAULT_TEST_GRANT_MINOR ?? 50_000_000)),
+    /** How long Vault waits on a merchant's own minting endpoint. */
+    fulfilTimeoutMs: Math.max(1000, Number(process.env.VAULT_FULFIL_TIMEOUT_MS ?? 10_000)),
+  },
+
+  /*
    * How long a launch must wait before it can ship a new version.
    *
    * Every release earns a fresh day on the board with its votes reset, which is

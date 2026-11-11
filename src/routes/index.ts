@@ -30,6 +30,8 @@ import shareRoutes from './share.routes';
 import uploadRoutes from './upload.routes';
 import userRoutes from './user.routes';
 import founderRoutes from './founder.routes';
+import vaultApiRoutes from './vaultApi.routes';
+import vaultRoutes from './vault.routes';
 
 const router = Router();
 
@@ -64,6 +66,10 @@ router.use('/gameid', gameIdRoutes);
 /* AgentID: the agent's own key-authenticated API first, then the operator's. */
 router.use('/agents/v1', agentApiRoutes);
 router.use('/agents', agentRoutes);
+/* Vault: the key-authenticated server API first, so it can never fall through
+   to a route that expects a session. */
+router.use('/vault/v1', vaultApiRoutes);
+router.use('/vault', vaultRoutes);
 router.use('/games', gameRoutes);
 router.use('/custom', customRoutes);
 router.use('/leaderboard', leaderboardRoutes);

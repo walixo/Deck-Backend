@@ -62,6 +62,13 @@ import {
 } from '../validators/match.validators';
 import { requireAuth } from '../middleware/auth';
 import { requireAdmin } from '../middleware/requireAdmin';
+import {
+  listIssuersForReview,
+  listPartnersForReview,
+  reviewIssuer,
+  reviewPartner,
+} from '../controllers/vault.controller';
+import { reviewIssuerSchema } from '../validators/vault.validators';
 import { listAgentGamesForReview, reviewAgentGame } from '../controllers/agentGame.controller';
 import { reviewAgentGameSchema } from '../validators/agentGame.validators';
 import { validate } from '../middleware/validate';
@@ -105,6 +112,13 @@ const router = Router();
 router.use(asyncHandler(requireAuth), requireAdmin);
 
 router.get('/overview', asyncHandler(getOverview));
+
+/* Vault: the gate on the supply side. An issuer is not sellable to
+   distributors until somebody here approves it. */
+router.get('/vault/issuers', asyncHandler(listIssuersForReview));
+router.patch('/vault/issuers/:id', validate(reviewIssuerSchema), asyncHandler(reviewIssuer));
+router.get('/vault/partners', asyncHandler(listPartnersForReview));
+router.patch('/vault/partners/:id', asyncHandler(reviewPartner));
 
 router.get('/users', validate(listUsersSchema, 'query'), asyncHandler(listUsers));
 router.patch('/users/:id/role', validate(updateRoleSchema), asyncHandler(updateUserRole));
