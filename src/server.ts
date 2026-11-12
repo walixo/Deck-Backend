@@ -51,6 +51,29 @@ async function bootstrap(): Promise<void> {
   /* In the background: a slow provider must not hold up the server starting. */
   void checkBachsKey();
 
+  /*
+   * Vault's encryption key, checked at boot rather than at first use.
+   *
+   * Without it the server starts perfectly happily and every Vault endpoint
+   * answers — right up until somebody buys a card, because the key is only
+   * reached when a code is sealed or revealed. That puts the failure after the
+   * distributor's wallet has already been debited, in front of a customer, on
+   * a deployment that looked healthy. Saying so at boot costs one line and
+   * moves the discovery to where it belongs.
+   *
+   * A warning rather than a refusal to start: the rest of Deck does not depend
+   * on Vault, and taking the whole API down over one unconfigured product
+   * would be the worse failure.
+   */
+  if (!env.vault.secret) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[vault] VAULT_SECRET is not set — card codes cannot be issued or read. ' +
+        'Vault will accept orders and then fail when it mints. Set it before going live, ' +
+        'and back it up with the database: losing it makes every issued code unreadable.',
+    );
+  }
+
   let closing = false;
 
   const shutdown = (signal: string): void => {
