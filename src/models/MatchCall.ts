@@ -38,6 +38,8 @@ export interface IMatchCall extends Document {
   /** Who pressed share. Usernames are revealed only when both did. */
   sharedBy: mongoose.Types.ObjectId[];
   revealedAt: Date | null;
+  /** Who said they'd talk to the other again. Both means they're matched first next time. */
+  againBy: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -97,10 +99,13 @@ const callSchema = new Schema<IMatchCall>(
     },
     sharedBy: { type: [Schema.Types.ObjectId], default: [] },
     revealedAt: { type: Date, default: null },
+    againBy: { type: [Schema.Types.ObjectId], default: [] },
   },
   { timestamps: true },
 );
 callSchema.index({ matchedAt: -1 });
+/* Start-up rebuilds "talk again" from the last month of connected calls. */
+callSchema.index({ startedAt: 1 });
 
 export const MatchCall: Model<IMatchCall> =
   mongoose.models.MatchCall ?? mongoose.model<IMatchCall>('MatchCall', callSchema);

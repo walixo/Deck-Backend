@@ -66,6 +66,8 @@ export const MATCH_LEDGER_KINDS = [
   'plus',
   'refund',
   'giftcard',
+  /** Free credit for bringing a friend, or for coming through a friend's invite. */
+  'invite',
 ] as const;
 export type MatchLedgerKind = (typeof MATCH_LEDGER_KINDS)[number];
 

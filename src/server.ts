@@ -3,7 +3,9 @@ import { connectDatabase, disconnectDatabase } from './config/db';
 import { env } from './config/env';
 import { checkBachsKey } from './services/bachs';
 import { assertSigningKey } from './services/gameIdKeys';
-import { loadTalkedCounts } from './services/matchHub';
+import { loadAgainPairs, loadTalkedCounts } from './services/matchHub';
+import { startInvites } from './services/matchInvites';
+import { startStreaks } from './services/matchStreaks';
 import { startBrandRetries } from './services/brandCards';
 import { startNights } from './services/matchNights';
 import { migratePots } from './services/matchWallet';
@@ -47,6 +49,12 @@ async function bootstrap(): Promise<void> {
     // eslint-disable-next-line no-console
     console.error(`[match] could not load who has talked to whom: ${error.message}`);
   });
+  loadAgainPairs().catch((error: Error) => {
+    // eslint-disable-next-line no-console
+    console.error(`[match] could not load who wants to talk again: ${error.message}`);
+  });
+  startInvites();
+  startStreaks();
 
   /* In the background: a slow provider must not hold up the server starting. */
   void checkBachsKey();

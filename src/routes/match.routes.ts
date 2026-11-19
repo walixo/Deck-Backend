@@ -11,8 +11,12 @@ import {
 } from '../controllers/matchGiftCards.controller';
 import { Router } from 'express';
 import {
+  again,
   callQuality,
   connected,
+  invite,
+  nextPrompt,
+  recap,
   iceServers,
   keepTalking,
   createMe,
@@ -133,6 +137,10 @@ router.post(
   asyncHandler(callQuality),
 );
 router.post('/calls/:callId/leave', auth, leaveCall);
+router.post('/calls/:callId/prompt', queueLimiter, auth, nextPrompt);
+router.post('/calls/:callId/again', queueLimiter, auth, again);
+router.get('/invite', auth, asyncHandler(invite));
+router.get('/recap', auth, asyncHandler(recap));
 router.post('/calls/:callId/share', auth, asyncHandler(share));
 router.post(
   '/calls/:callId/report',
