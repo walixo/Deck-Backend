@@ -65,9 +65,11 @@ services:
         sync: false
 
       # Social sign-in. Optional — leave any of these blank in the dashboard and
-      # that provider simply is not offered. PUBLIC_API_URL is this service's
-      # own https address and must match the callback URL registered with each
-      # provider exactly.
+      # that provider simply is not offered. PUBLIC_API_URL is the address the
+      # browser calls /api on — the Vercel domain when Vercel rewrites /api,
+      # this service's own address only when VITE_API_BASE_URL points here —
+      # and must match the callback URL registered with each provider exactly.
+      # See DEPLOY.md §5.
       - key: PUBLIC_API_URL
         sync: false
       - key: GITHUB_CLIENT_ID
