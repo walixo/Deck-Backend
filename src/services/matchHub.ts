@@ -13,6 +13,7 @@ import {
 import { ApiError } from '../utils/ApiError';
 import { hoursAt, lateAt, matchDay } from './matchHours';
 import { tonight } from './matchNights';
+import { pickPrompt } from './matchPrompts';
 import { isPlus, MATCH_PRICES, NotEnoughCredit, refund, spend } from './matchWallet';
 import { pushPublicKey } from './vapid';
 
@@ -79,6 +80,13 @@ interface Call {
   freeAdded: boolean;
   /** Whoever pressed "Keep talking", and what they have paid for. */
   payers: Map<string, Payer>;
+  /** The icebreaker both people see, and how many times it has been swapped. */
+  prompt: string;
+  promptSwaps: number;
+  /** Who said they'd like to talk again. Only a pair who both did is told. */
+  again: Set<string>;
+  /** These two had both asked to talk again; this call is that. */
+  reunion: boolean;
   timer: NodeJS.Timeout | null;
 }
 
@@ -119,6 +127,10 @@ const EXTRA_MS = CALL_MS;
 const BLOCK_MS: Record<MatchBilling, number> = { second: 10_000, minute: 60_000 };
 /** The next block is bought this long before the current one runs out. */
 const RENEW_EARLY_MS = 2_500;
+/** A call's icebreaker can be swapped this many times, so it stays a nudge, not a game. */
+const PROMPT_SWAPS = 3;
+/** "Talk again" lasts this long; after a month without meeting, it lapses. */
+const AGAIN_MS = 30 * 24 * 60 * 60 * 1000;
 
 const people = new Map<string, Person>();
 const queues: Record<MatchGender, string[]> = { male: [], female: [] };
@@ -127,6 +139,9 @@ const recent = new Map<string, number>();
 /* How many times each pair has actually talked — calls that connected, not
    ones that failed to. Loaded from the call history at start-up. */
 const talked = new Map<string, number>();
+/* Pairs who both asked to talk again, and when they did. They are matched
+   ahead of everyone else; the next call they connect on uses it up. */
+const againPairs = new Map<string, number>();
 
 const pairKey = (a: string, b: string) => [a, b].sort().join(':');
 
@@ -199,6 +214,24 @@ function arrived(gender: MatchGender): void {
   if (hoursAt().open) arrivalListener?.(gender);
 }
 
+/* A call connected: invites and streaks count it. Listeners must not throw. */
+export interface StartedCall {
+  callId: string;
+  male: string;
+  female: string;
+  startedAt: number;
+}
+const startListeners: ((call: StartedCall) => void)[] = [];
+export function onCallStarted(listener: (call: StartedCall) => void): void {
+  startListeners.push(listener);
+}
+
+/* Regular hours just ended for the evening: the nightly recap goes out. */
+const closingListeners: (() => void)[] = [];
+export function onClosing(listener: () => void): void {
+  closingListeners.push(listener);
+}
+
 export function isOnline(userId: string): boolean {
   return Boolean(people.get(userId)?.lines.size);
 }
@@ -240,6 +273,8 @@ function snapshot(person: Person) {
             endsAt: call.endsAt,
             time: timeView(call, person.userId),
             them: { verified: Boolean(people.get(partnerOf(call, person.userId))?.verified) },
+            prompt: call.prompt,
+            reunion: call.reunion,
           }
         : null,
     serverNow: Date.now(),
@@ -417,10 +452,25 @@ function canMeet(man: Person, woman: Person): boolean {
 }
 
 /**
- * Pairs everyone it can, oldest waiting first on both sides — someone in the
- * same country first, when one is waiting, and otherwise whoever is.
+ * Pairs everyone it can. Two people who both asked to talk again go first,
+ * whenever both are waiting; then oldest waiting first on both sides —
+ * someone in the same country first, when one is waiting, and otherwise
+ * whoever is.
  */
 function pairUp(): void {
+  if (againPairs.size > 0) {
+    for (const manId of [...queues.male]) {
+      const man = people.get(manId);
+      if (!man || man.state !== 'waiting') continue;
+      const womanId = queues.female.find((id) => {
+        const woman = people.get(id);
+        return (
+          woman?.state === 'waiting' && againPairs.has(pairKey(manId, id)) && canMeet(man, woman)
+        );
+      });
+      if (womanId) begin(man, people.get(womanId)!);
+    }
+  }
   for (const manId of [...queues.male]) {
     const man = people.get(manId);
     if (!man || man.state !== 'waiting') continue;
@@ -455,6 +505,10 @@ function begin(man: Person, woman: Person): void {
     revealed: false,
     freeAdded: false,
     payers: new Map(),
+    prompt: pickPrompt(),
+    promptSwaps: 0,
+    again: new Set(),
+    reunion: againPairs.has(pairKey(man.userId, woman.userId)),
     timer: null,
   };
   calls.set(call.id, call);
@@ -471,6 +525,8 @@ function begin(man: Person, woman: Person): void {
       callId: call.id,
       caller: call.caller === person.userId,
       them: { verified: partner.verified },
+      prompt: call.prompt,
+      reunion: call.reunion,
     });
   }
   recent.set(pairKey(man.userId, woman.userId), call.matchedAt);
@@ -516,6 +572,8 @@ export function connected(userId: string, callId: string): void {
   call.startedAt = Date.now();
   const pair = pairKey(call.male, call.female);
   talked.set(pair, (talked.get(pair) ?? 0) + 1);
+  /* They asked to talk again, and now have: that wish is used up. */
+  againPairs.delete(pair);
   call.endsAt = call.startedAt + CALL_MS;
   call.timer = setTimeout(() => end(call, 'time'), CALL_MS);
   /* Anyone who pressed Keep talking while connecting starts counting now. */
@@ -535,6 +593,68 @@ export function connected(userId: string, callId: string): void {
   void MatchCall.updateOne({ callId }, { startedAt: new Date(call.startedAt) }).catch(
     () => undefined,
   );
+  const started: StartedCall = {
+    callId,
+    male: call.male,
+    female: call.female,
+    startedAt: call.startedAt,
+  };
+  for (const listener of startListeners) {
+    try {
+      listener(started);
+    } catch {
+      /* A listener's trouble is never the call's. */
+    }
+  }
+}
+
+/**
+ * Another icebreaker, for both — on either person's tap, a few times a call.
+ */
+export function nextPrompt(userId: string, callId: string): { prompt: string } {
+  const call = inCall(userId, callId);
+  if (call.state === 'ended') throw ApiError.conflict('The call has ended');
+  if (call.promptSwaps >= PROMPT_SWAPS) {
+    throw ApiError.conflict('That’s the last question — over to you two');
+  }
+  call.promptSwaps += 1;
+  call.prompt = pickPrompt(call.prompt);
+  for (const id of [call.male, call.female]) {
+    tell(id, 'prompt', {
+      callId,
+      prompt: call.prompt,
+      by: id === userId ? 'you' : 'them',
+      left: PROMPT_SWAPS - call.promptSwaps,
+    });
+  }
+  return { prompt: call.prompt };
+}
+
+/**
+ * "I'd talk to them again", after a call that connected. Nobody hears about
+ * one-sided interest; when both have said it, both are told, and the hub
+ * matches them ahead of everyone else the next time both are in line.
+ */
+export function wantAgain(userId: string, callId: string): { mutual: boolean } {
+  const call = inCall(userId, callId);
+  if (call.state !== 'ended') throw ApiError.conflict('Wait until the call is over');
+  if (!call.startedAt) throw ApiError.conflict('You two never got to talk');
+  if (call.endReason === 'reported') throw ApiError.conflict('This call was reported');
+  const other = partnerOf(call, userId);
+  if (people.get(userId)?.blocked.has(other) || people.get(other)?.blocked.has(userId)) {
+    throw ApiError.conflict('This call was reported');
+  }
+  call.again.add(userId);
+  void MatchCall.updateOne({ callId }, { $addToSet: { againBy: userId } }).catch(() => undefined);
+  const mutual = call.again.size === 2;
+  if (mutual) {
+    const pair = pairKey(call.male, call.female);
+    if (!againPairs.has(pair)) {
+      againPairs.set(pair, Date.now());
+      for (const id of [call.male, call.female]) tell(id, 'again', { callId, mutual: true });
+    }
+  }
+  return { mutual };
 }
 
 function end(call: Call, reason: MatchEndReason, by?: string): void {
@@ -556,6 +676,9 @@ function end(call: Call, reason: MatchEndReason, by?: string): void {
       by: by ? (by === id ? 'you' : 'them') : null,
       canShare: reason === 'time',
       shareUntil: call.shareUntil,
+      /* "Talk again" is open after any call that connected and wasn't reported,
+         for as long as the hub remembers the call. */
+      againUntil: call.startedAt && reason !== 'reported' ? Date.now() + SHARE_MS : 0,
       serverNow: Date.now(),
     });
   }
@@ -817,8 +940,18 @@ setInterval(() => {
   const open = hoursAt().open;
   const late = lateAt().open;
   if (open === wasOpen && late === wasLate) return;
+  const closing = wasOpen && !open;
   wasOpen = open;
   wasLate = late;
+  if (closing) {
+    for (const listener of closingListeners) {
+      try {
+        listener();
+      } catch {
+        /* Closing goes ahead regardless. */
+      }
+    }
+  }
   if (!open) {
     /* At closing, Match+ members may stay in line for the late window. */
     for (const gender of ['male', 'female'] as const) {
@@ -852,6 +985,31 @@ export async function loadTalkedCounts(): Promise<void> {
   }
 }
 
+/**
+ * Rebuilds who wants to talk again from the last month of calls, so it
+ * survives a restart: a pair's mutual "again" stands until they next connect.
+ * Called once at start-up.
+ */
+export async function loadAgainPairs(): Promise<void> {
+  const history = await MatchCall.find({
+    startedAt: { $gte: new Date(Date.now() - AGAIN_MS) },
+  })
+    .sort({ startedAt: 1 })
+    .select('male female againBy startedAt')
+    .lean();
+  for (const call of history) {
+    const pair = pairKey(String(call.male), String(call.female));
+    againPairs.delete(pair);
+    if ((call.againBy ?? []).length >= 2) againPairs.set(pair, call.startedAt!.getTime());
+  }
+}
+
+/* Old wishes lapse, checked hourly. */
+setInterval(() => {
+  const cutoff = Date.now() - AGAIN_MS;
+  for (const [pair, at] of againPairs) if (at < cutoff) againPairs.delete(pair);
+}, 60 * 60_000).unref();
+
 /** For tests: the hub back to empty. */
 export function resetMatchHub(): void {
   for (const call of calls.values()) if (call.timer) clearTimeout(call.timer);
@@ -859,6 +1017,7 @@ export function resetMatchHub(): void {
   calls.clear();
   recent.clear();
   talked.clear();
+  againPairs.clear();
   queues.male = [];
   queues.female = [];
 }

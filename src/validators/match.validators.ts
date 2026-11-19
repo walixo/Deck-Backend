@@ -44,6 +44,8 @@ export const createMatchProfileSchema = z
     instagram: instagramField.optional(),
     country: countryField.optional(),
     adult: z.literal(true, { errorMap: () => ({ message: 'Match is for people 18 and over' }) }),
+    /** A friend's invite code, from the link they shared. */
+    invite: z.string().trim().max(20).optional(),
   })
   .strict();
 

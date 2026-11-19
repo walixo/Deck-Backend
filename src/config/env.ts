@@ -233,6 +233,13 @@ export const env = {
   /* Below this many people online, Match says "busy" or "quiet" instead of a number. */
   matchCountsFrom: Math.max(0, Number(process.env.MATCH_COUNTS_FROM ?? 20)),
   /*
+   * Invite a friend: free credit, in kobo, for both the inviter and the friend
+   * once the friend's first call connects (₦200 each by default), and how many
+   * friends one person can be paid for. 0 switches the bonus off.
+   */
+  matchInviteBonusMinor: Math.max(0, Number(process.env.MATCH_INVITE_BONUS_MINOR ?? 200_00)),
+  matchInviteCap: Math.max(0, Number(process.env.MATCH_INVITE_CAP ?? 20)),
+  /*
    * Web Push, for "ping me when someone's free". Generate once with
    * `npx web-push generate-vapid-keys`; the private key is a secret. Without
    * both keys the ping option simply does not appear.

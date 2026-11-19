@@ -61,6 +61,17 @@ export interface IMatchProfile extends Document {
   plusUntil: Date | null;
   /** When staff approved their selfie check; shown as a Verified badge. */
   verifiedAt: Date | null;
+  /** Their own invite code, made the first time they look at it. */
+  inviteCode: string | null;
+  /** Whose invite brought them, if anyone's. Set only when the profile is made. */
+  invitedBy: mongoose.Types.ObjectId | null;
+  /** When their first real call paid out the invite bonus, to them and their inviter. */
+  inviteRewardedAt: Date | null;
+  /**
+   * Evenings in a row with at least one call that connected. `lastDay` is the
+   * Lagos date of the last such evening; `best` is the longest run ever.
+   */
+  streak: { count: number; best: number; lastDay: string };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,8 +103,21 @@ const profileSchema = new Schema<IMatchProfile>(
     country: { type: String, default: '', uppercase: true, match: /^([A-Z]{2})?$/ },
     plusUntil: { type: Date, default: null },
     verifiedAt: { type: Date, default: null },
+    inviteCode: { type: String, default: null },
+    invitedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    inviteRewardedAt: { type: Date, default: null },
+    streak: {
+      count: { type: Number, default: 0 },
+      best: { type: Number, default: 0 },
+      lastDay: { type: String, default: '' },
+    },
   },
   { timestamps: true },
+);
+/* Codes are made lazily, so most profiles have none: unique only among those that do. */
+profileSchema.index(
+  { inviteCode: 1 },
+  { unique: true, partialFilterExpression: { inviteCode: { $type: 'string' } } },
 );
 
 export const MatchProfile: Model<IMatchProfile> =

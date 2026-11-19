@@ -5,6 +5,8 @@ import { MatchEntry, MatchGift } from '../models/MatchMoney';
 import { describeDevice } from '../services/device';
 import * as hub from '../services/matchHub';
 import { hoursAt, matchDay } from '../services/matchHours';
+import { inviterFor, inviteSummary } from '../services/matchInvites';
+import { recapFor, streakView } from '../services/matchStreaks';
 import { tonight } from '../services/matchNights';
 import { pushPublicKey } from '../services/matchPing';
 import { iceServersFor } from '../services/matchRelay';
@@ -51,6 +53,7 @@ function toProfileResponse(profile: IMatchProfile, pings = false) {
     verified: Boolean(profile.verifiedAt),
     billing: profile.billing ?? 'second',
     country: profile.country ?? '',
+    streak: streakView(profile),
   };
 }
 
@@ -134,6 +137,8 @@ export async function createMe(req: Request, res: Response): Promise<void> {
     instagram: input.instagram ?? '',
     country: input.country ?? '',
     adultAt: new Date(),
+    /* An unknown or own code is ignored, not refused: it shouldn't block signing up. */
+    invitedBy: await inviterFor(input.invite, req.user!._id),
   });
   res.status(201).json({ success: true, data: toProfileResponse(profile) });
 }
@@ -338,6 +343,36 @@ export async function report(req: Request, res: Response): Promise<void> {
     hub.kick(other);
   }
   res.json({ success: true, data: { reported: true, blocked: true } });
+}
+
+/** Another icebreaker, for both people in the call. */
+export function nextPrompt(req: Request, res: Response): void {
+  res.json({
+    success: true,
+    data: hub.nextPrompt(String(req.user!._id), String(req.params.callId)),
+  });
+}
+
+/** "I'd talk to them again" — both are told only if both said it. */
+export function again(req: Request, res: Response): void {
+  res.json({
+    success: true,
+    data: hub.wantAgain(String(req.user!._id), String(req.params.callId)),
+  });
+}
+
+/** The caller's invite code and link, and what their invites have earned. */
+export async function invite(req: Request, res: Response): Promise<void> {
+  const profile = await MatchProfile.findOne({ user: req.user!._id });
+  if (!profile) throw ApiError.badRequest('Set up Match first');
+  res.json({ success: true, data: await inviteSummary(profile) });
+}
+
+/** This evening in numbers — or the last evening's, while Match is closed. */
+export async function recap(req: Request, res: Response): Promise<void> {
+  const profile = await MatchProfile.findOne({ user: req.user!._id });
+  if (!profile) throw ApiError.badRequest('Set up Match first');
+  res.json({ success: true, data: await recapFor(profile) });
 }
 
 /** Everyone the caller swapped usernames with, newest first. */
