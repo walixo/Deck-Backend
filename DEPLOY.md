@@ -431,36 +431,53 @@ Both providers are independent and both are optional: whatever has keys is
 offered on the sign-in page, and what does not is simply absent. With neither
 set, Deck works exactly as it did — email and password.
 
-First set the API's own public address, because the callback URL is built from
-it and cannot be inferred behind a proxy:
+First set `PUBLIC_API_URL`: the address the browser uses to reach `/api`. The
+callback URL is built from it, and it cannot be inferred behind a proxy. Which
+address that is depends on how the frontend reaches the API (see the top of
+this file):
+
+| Frontend | `PUBLIC_API_URL` |
+| --- | --- |
+| `VITE_API_BASE_URL` **unset** (Vercel rewrites `/api`) | The Vercel domain, e.g. `https://onedeck.africa` |
+| `VITE_API_BASE_URL` **set** (browser calls the API directly) | The API host, e.g. `https://deck-backend-9js1.onrender.com` |
 
 ```
-PUBLIC_API_URL=https://YOUR-API-HOST
+PUBLIC_API_URL=https://THE-HOST-THE-BROWSER-CALLS
 ```
 
 **GitHub** — Settings → Developer settings → OAuth Apps → New OAuth App:
 
 ```
-Authorization callback URL: https://YOUR-API-HOST/api/auth/oauth/github/callback
+Authorization callback URL: <PUBLIC_API_URL>/api/auth/oauth/github/callback
 ```
 
 **Google** — console.cloud.google.com → APIs & Services → Credentials → Create
 OAuth client ID → Web application:
 
 ```
-Authorised redirect URI:    https://YOUR-API-HOST/api/auth/oauth/google/callback
+Authorised redirect URI:    <PUBLIC_API_URL>/api/auth/oauth/google/callback
 ```
 
 Then set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` and `GOOGLE_CLIENT_ID` /
 `GOOGLE_CLIENT_SECRET` on the API host. Each pair is all-or-nothing; a lone id
 makes the server refuse to start rather than fail later at a redirect.
 
-Three things that will bite:
+Four things that will bite:
 
-- **The callback URL must point at the API host, not at the Vercel domain.**
-  The exchange sends the client secret, so it happens server to server, and the
-  provider compares the redirect URI character for character against what is
-  registered. A trailing slash is a different URL.
+- **The callback must land on the same host the sign-in started on.** Starting
+  sign-in sets two cookies, `deck_oauth_state` (the CSRF check) and
+  `deck_oauth_return` (which site — Deck or Match — to go back to), and a
+  browser only sends cookies back to the host that set them. With the rewrite,
+  sign-in starts on the Vercel domain, so a callback registered on the API host
+  arrives with neither cookie: every attempt fails with "That sign-in link had
+  expired", and Match users are dropped on the main site's sign-in page. The
+  code exchange is still server to server — the provider never fetches the
+  redirect URI, it only checks it matches — so routing the callback through
+  the Vercel rewrite is fine.
+- **The redirect URI is compared character for character** against what is
+  registered with the provider. A trailing slash, `www.` or `http` is a
+  different URL. When moving it, register the new one before changing
+  `PUBLIC_API_URL`, and remove the old one once sign-in works.
 - **`CLIENT_ORIGIN`'s first entry is where the browser is sent afterwards.**
   The same ordering rule the share kit depends on — if localhost is first, a
   production sign-in ends on a machine that is not on the internet.
